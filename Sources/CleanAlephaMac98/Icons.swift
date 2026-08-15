@@ -4,6 +4,7 @@ import SwiftUI
 /// Color comes from `foregroundStyle` — night is the same marks on plum, not invert.
 enum Glyph: Equatable, Sendable {
     case smart, junk, mail, trash, leftovers, large, browsers, dev, messengers, space, tools
+    case pulse, protect, startup
     case film, archive, pdf, photo, paint
     case lock, check, warn, selectOn, selectOff, sun, moon
 
@@ -18,6 +19,9 @@ enum Glyph: Equatable, Sendable {
         case .browsers: self = .browsers
         case .dev: self = .dev
         case .messengers: self = .messengers
+        case .pulse: self = .pulse
+        case .protect: self = .protect
+        case .startup: self = .startup
         case .space: self = .space
         case .tools: self = .tools
         }
@@ -237,6 +241,39 @@ private enum GlyphDraw {
                 p.addLine(to: pt(12, 20.2))
                 p.move(to: pt(10.2, 18.4))
                 p.addLine(to: pt(13.8, 18.4))
+            }
+
+        case .pulse:
+            strokePath { p in
+                p.move(to: pt(3.4, 13.2))
+                p.addLine(to: pt(6.6, 13.2))
+                p.addLine(to: pt(8.4, 7.4))
+                p.addLine(to: pt(11.2, 17.8))
+                p.addLine(to: pt(13.6, 10.6))
+                p.addLine(to: pt(16.2, 13.2))
+                p.addLine(to: pt(20.6, 13.2))
+            }
+
+        case .protect:
+            strokePath { p in
+                p.move(to: pt(12, 3.8))
+                p.addLine(to: pt(19.2, 7.2))
+                p.addLine(to: pt(19.2, 13.4))
+                p.addQuadCurve(to: pt(12, 20.4), control: pt(18.6, 18.6))
+                p.addQuadCurve(to: pt(4.8, 13.4), control: pt(5.4, 18.6))
+                p.addLine(to: pt(4.8, 7.2))
+                p.closeSubpath()
+            }
+
+        case .startup:
+            strokePath { p in
+                p.addEllipse(in: CGRect(center: pt(12, 12.4), radius: sc(7.2)))
+            }
+            strokePath { p in
+                p.move(to: pt(12, 12.4))
+                p.addLine(to: pt(12, 7.6))
+                p.move(to: pt(12, 12.4))
+                p.addLine(to: pt(16.4, 14.6))
             }
 
         case .film:

@@ -1,0 +1,557 @@
+import AppKit
+import Darwin
+import Foundation
+
+enum PulsePressure: String, Sendable {
+    case normal, warn, critical
+
+    var title: Line {
+        switch self {
+        case .normal: Copy.pressureNormal
+        case .warn: Copy.pressureWarn
+        case .critical: Copy.pressureCritical
+        }
+    }
+}
+
+struct LiveApp: Identifiable, Sendable, Equatable {
+    var id: String { name }
+    var name: String
+    var bytes: Int64
+    var pids: [Int32]
+}
+
+struct LiveTab: Identifiable, Sendable, Equatable {
+    var id: String { "\(browser)-\(window)-\(tabIndex)-\(url)" }
+    var browser: String
+    var title: String
+    var url: String
+    var estimate: Int64
+    var window: Int
+    var tabIndex: Int
+}
+
+struct PulseSnapshot: Sendable {
+    var total: Int64
+    var used: Int64
+    var wired: Int64
+    var compressed: Int64
+    var swap: Int64
+    var pressure: PulsePressure
+    var apps: [LiveApp]
+    var tabs: [LiveTab]
+    var tabAccess: Line?
+}
+
+enum FindingSeverity: String, Sendable {
+    case high, medium, info
+}
+
+struct ProtectFinding: Identifiable, Sendable, Equatable {
+    var id: String
+    var title: Line
+    var subtitle: Line
+    var severity: FindingSeverity
+    var url: URL?
+    var bytes: Int64
+    var selected: Bool
+    var kind: CleanKind
+}
+
+struct StartupRow: Identifiable, Sendable, Equatable {
+    var id: String
+    var name: String
+    var detail: Line
+    var url: URL
+    var ours: Bool
+    var apple: Bool
+    var runAtLoad: Bool
+    var selected: Bool
+    var kind: CleanKind
+}
+
+enum LiveProbe {
+    static func pulse() -> PulseSnapshot {
+        let mem = memory()
+        let apps = topApps()
+        let (tabs, note) = browserTabs(apps: apps)
+        return PulseSnapshot(
+            total: mem.total,
+            used: mem.used,
+            wired: mem.wired,
+            compressed: mem.compressed,
+            swap: mem.swap,
+            pressure: mem.pressure,
+            apps: apps,
+            tabs: tabs,
+            tabAccess: note
+        )
+    }
+
+    static func protect() -> [ProtectFinding] {
+        var out: [ProtectFinding] = []
+        out.append(contentsOf: adwareApps())
+        out.append(contentsOf: adwareSupport())
+        out.append(contentsOf: shadyAgents())
+        if let hosts = hostsFinding() { out.append(hosts) }
+        if out.isEmpty {
+            out.append(ProtectFinding(
+                id: "clear",
+                title: Copy.protectClear,
+                subtitle: Copy.protectClearSub,
+                severity: .info,
+                url: nil,
+                bytes: 0,
+                selected: false,
+                kind: .advice
+            ))
+        }
+        return out.sorted { a, b in
+            if a.severity.sort != b.severity.sort { return a.severity.sort < b.severity.sort }
+            return a.bytes > b.bytes
+        }
+    }
+
+    static func startup() -> [StartupRow] {
+        var rows = launchAgents() + loginItems()
+        rows.sort {
+            if $0.ours != $1.ours { return $0.ours && !$1.ours }
+            if $0.apple != $1.apple { return !$0.apple && $1.apple }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        return rows
+    }
+
+    static func revealTab(_ tab: LiveTab) {
+        let script: String
+        if tab.browser == "Safari" {
+            script = """
+            tell application "Safari"
+              if (count of windows) ≥ \(tab.window) then
+                set index of window \(tab.window) to 1
+                tell window \(tab.window) to set current tab to tab \(tab.tabIndex)
+              end if
+              activate
+            end tell
+            """
+        } else {
+            script = """
+            tell application "\(tab.browser)"
+              if (count of windows) ≥ \(tab.window) then
+                set index of window \(tab.window) to 1
+                set active tab index of window \(tab.window) to \(tab.tabIndex)
+              end if
+              activate
+            end tell
+            """
+        }
+        _ = runAppleScript(script)
+    }
+
+    // MARK: Memory
+
+    private static func memory() -> (total: Int64, used: Int64, wired: Int64, compressed: Int64, swap: Int64, pressure: PulsePressure) {
+        var size = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.stride / MemoryLayout<integer_t>.stride)
+        var stats = vm_statistics64()
+        let kr = withUnsafeMutablePointer(to: &stats) { ptr in
+            ptr.withMemoryRebound(to: integer_t.self, capacity: Int(size)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &size)
+            }
+        }
+        var total: UInt64 = 0
+        var len = MemoryLayout<UInt64>.size
+        sysctlbyname("hw.memsize", &total, &len, nil, 0)
+        var pageSize: Int32 = 16384
+        var pageLen = MemoryLayout<Int32>.size
+        sysctlbyname("hw.pagesize", &pageSize, &pageLen, nil, 0)
+        let page = UInt64(max(pageSize, 4096))
+        guard kr == KERN_SUCCESS, total > 0 else {
+            return (Int64(total), 0, 0, 0, 0, .normal)
+        }
+        let wired = UInt64(stats.wire_count) * page
+        let active = UInt64(stats.active_count) * page
+        let compressed = UInt64(stats.compressor_page_count) * page
+        let used = min(total, wired + active + compressed)
+        var swapUsage = xsw_usage()
+        var swapLen = MemoryLayout<xsw_usage>.size
+        sysctlbyname("vm.swapusage", &swapUsage, &swapLen, nil, 0)
+        let swap = Int64(swapUsage.xsu_used)
+        let frac = Double(used) / Double(total)
+        let pressure: PulsePressure
+        if frac >= 0.92 || swap > 1_073_741_824 { pressure = .critical }
+        else if frac >= 0.78 || swap > 256_000_000 { pressure = .warn }
+        else { pressure = .normal }
+        return (Int64(total), Int64(used), Int64(wired), Int64(compressed), swap, pressure)
+    }
+
+    private static func topApps() -> [LiveApp] {
+        let task = Process()
+        let out = Pipe()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-axo", "pid=,rss=,command="]
+        task.standardOutput = out
+        task.standardError = Pipe()
+        do { try task.run() } catch { return [] }
+        task.waitUntilExit()
+        let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        var grouped: [String: (bytes: Int64, pids: [Int32])] = [:]
+        for line in text.split(whereSeparator: \.isNewline) {
+            let raw = line.trimmingCharacters(in: .whitespaces)
+            let parts = raw.split(maxSplits: 2, whereSeparator: \.isWhitespace)
+            guard parts.count >= 3,
+                  let pid = Int32(parts[0]),
+                  let rssKB = Int64(parts[1]) else { continue }
+            let command = String(parts[2])
+            if shouldIgnore(command) { continue }
+            let name = appName(from: command)
+            let bytes = rssKB * 1024
+            var entry = grouped[name] ?? (0, [])
+            entry.bytes += bytes
+            entry.pids.append(pid)
+            grouped[name] = entry
+        }
+        return grouped
+            .map { LiveApp(name: $0.key, bytes: $0.value.bytes, pids: $0.value.pids) }
+            .filter { $0.bytes >= 40_000_000 }
+            .sorted { $0.bytes > $1.bytes }
+    }
+
+    private static func shouldIgnore(_ command: String) -> Bool {
+        let skip = [
+            "kernel_task", "launchd", "WindowServer", "loginwindow",
+            "syspolicyd", "runningboardd", "logd", "cfprefsd",
+            "CleanAlephaMac98"
+        ]
+        return skip.contains { command.contains($0) }
+    }
+
+    private static func appName(from command: String) -> String {
+        let map: [(String, String)] = [
+            ("Google Chrome", "Google Chrome"),
+            ("Microsoft Edge", "Microsoft Edge"),
+            ("Brave Browser", "Brave Browser"),
+            ("Yandex", "Yandex"),
+            ("Firefox", "Firefox"),
+            ("Safari", "Safari"),
+            ("Arc.app", "Arc"),
+            ("Cursor", "Cursor"),
+            ("Code Helper", "Visual Studio Code"),
+            ("Electron", "Electron")
+        ]
+        for (needle, name) in map where command.contains(needle) {
+            return name
+        }
+        if let range = command.range(of: ".app/Contents/") {
+            let prefix = String(command[..<range.lowerBound])
+            return URL(fileURLWithPath: prefix).lastPathComponent
+        }
+        return URL(fileURLWithPath: command.split(separator: " ").first.map(String.init) ?? command).lastPathComponent
+    }
+
+    private static func browserTabs(apps: [LiveApp]) -> ([LiveTab], Line?) {
+        let browsers: [(app: String, scriptName: String)] = [
+            ("Safari", "Safari"),
+            ("Google Chrome", "Google Chrome"),
+            ("Microsoft Edge", "Microsoft Edge"),
+            ("Brave Browser", "Brave Browser"),
+            ("Chromium", "Chromium"),
+            ("Yandex", "Yandex"),
+            ("Arc", "Arc")
+        ]
+        var tabs: [LiveTab] = []
+        var denied = false
+        for spec in browsers {
+            guard apps.contains(where: { $0.name == spec.app }) || spec.app == "Safari" else { continue }
+            let result = runAppleScript(tabScript(for: spec.scriptName))
+            if result.denied { denied = true }
+            let rss = apps.first(where: { $0.name == spec.app })?.bytes ?? 0
+            let parsed = parseTabs(result.output, browser: spec.scriptName)
+            let share = parsed.isEmpty ? 0 : rss / Int64(parsed.count)
+            for var tab in parsed {
+                tab.estimate = share
+                tabs.append(tab)
+            }
+        }
+        tabs.sort { $0.estimate > $1.estimate }
+        let note: Line? = denied ? Copy.needAutomation : (tabs.isEmpty ? nil : Copy.weDontQuitBrowsers)
+        return (Array(tabs.prefix(40)), note)
+    }
+
+    private static func tabScript(for app: String) -> String {
+        if app == "Safari" {
+            return """
+            if application "Safari" is running then
+              tell application "Safari"
+                set out to ""
+                set winIndex to 1
+                repeat with w in windows
+                  set tabIndex to 1
+                  repeat with t in tabs of w
+                    set out to out & (name of t) & tab & (URL of t) & tab & winIndex & tab & tabIndex & linefeed
+                    set tabIndex to tabIndex + 1
+                  end repeat
+                  set winIndex to winIndex + 1
+                end repeat
+                return out
+              end tell
+            end if
+            return ""
+            """
+        }
+        return """
+        if application "\(app)" is running then
+          tell application "\(app)"
+            set out to ""
+            set winIndex to 1
+            repeat with w in windows
+              set tabIndex to 1
+              repeat with t in tabs of w
+                set out to out & (title of t) & tab & (URL of t) & tab & winIndex & tab & tabIndex & linefeed
+                set tabIndex to tabIndex + 1
+              end repeat
+              set winIndex to winIndex + 1
+            end repeat
+            return out
+          end tell
+        end if
+        return ""
+        """
+    }
+
+    private static func parseTabs(_ text: String, browser: String) -> [LiveTab] {
+        var out: [LiveTab] = []
+        for line in text.split(whereSeparator: \.isNewline) {
+            let cols = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard cols.count >= 4, let win = Int(cols[2]), let idx = Int(cols[3]) else { continue }
+            let title = cols[0].isEmpty ? cols[1] : cols[0]
+            out.append(LiveTab(browser: browser, title: title, url: cols[1], estimate: 0, window: win, tabIndex: idx))
+        }
+        return out
+    }
+
+    private static func runAppleScript(_ source: String) -> (output: String, denied: Bool) {
+        var error: NSDictionary?
+        guard let script = NSAppleScript(source: source) else { return ("", false) }
+        let result = script.executeAndReturnError(&error)
+        if let error {
+            let n = error[NSAppleScript.errorNumber] as? Int ?? 0
+            return ("", n == -1743 || n == -1728)
+        }
+        return (result.stringValue ?? "", false)
+    }
+
+    // MARK: Protect
+
+    private static let adwareNeedles: [String] = [
+        "mackeeper", "genieo", "installmac", "bundlore", "searchmarquis", "search marquis",
+        "advanced mac cleaner", "adware doctor", "macreviver", "pckeeper",
+        "shlayer", "pirrit", "vsearch", "maxoffer", "macprotector",
+        "macoptimizerpro", "myosx", "osx.adware", "imacros adware"
+    ]
+
+    private static func looksAdware(_ name: String) -> Bool {
+        let n = name.lowercased()
+        if n.contains("cleanmymac") { return false }
+        if n.contains("cleanalephamac") { return false }
+        return adwareNeedles.contains { n.contains($0) }
+    }
+
+    private static func adwareApps() -> [ProtectFinding] {
+        var out: [ProtectFinding] = []
+        for root in ["/Applications", NSHomeDirectory() + "/Applications"] {
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: root) else { continue }
+            for name in names where name.hasSuffix(".app") && looksAdware(name) {
+                let url = URL(fileURLWithPath: root).appendingPathComponent(name)
+                let b = DiskSizer.bytes(at: url)
+                out.append(ProtectFinding(
+                    id: "app-\(url.path)",
+                    title: Line.proper(name.replacingOccurrences(of: ".app", with: "")),
+                    subtitle: Copy.knownPUP,
+                    severity: .high,
+                    url: url,
+                    bytes: b,
+                    selected: false,
+                    kind: .deleteItem
+                ))
+            }
+        }
+        return out
+    }
+
+    private static func adwareSupport() -> [ProtectFinding] {
+        let support = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        guard let kids = try? FileManager.default.contentsOfDirectory(at: support, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+            return []
+        }
+        var out: [ProtectFinding] = []
+        for url in kids where looksAdware(url.lastPathComponent) {
+            let b = DiskSizer.bytes(at: url)
+            guard b > 16_384 else { continue }
+            out.append(ProtectFinding(
+                id: "sup-\(url.lastPathComponent)",
+                title: Line.proper(url.lastPathComponent),
+                subtitle: Copy.knownPUPSupport,
+                severity: .high,
+                url: url,
+                bytes: b,
+                selected: false,
+                kind: .wipeChildren
+            ))
+        }
+        return out
+    }
+
+    private static func shadyAgents() -> [ProtectFinding] {
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents")
+        guard let kids = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+            return []
+        }
+        var out: [ProtectFinding] = []
+        for url in kids where url.pathExtension == "plist" {
+            if url.lastPathComponent.contains("CleanAlephaMac98") { continue }
+            if looksAdware(url.lastPathComponent) {
+                out.append(ProtectFinding(
+                    id: "ag-\(url.lastPathComponent)",
+                    title: Line.proper(url.deletingPathExtension().lastPathComponent),
+                    subtitle: Copy.adwareAgent,
+                    severity: .high,
+                    url: url,
+                    bytes: DiskSizer.bytes(at: url),
+                    selected: false,
+                    kind: .removeAgent
+                ))
+                continue
+            }
+            guard let dict = plist(url) else { continue }
+            let program = programPath(dict)
+            if program.isEmpty { continue }
+            if program.contains("/Applications/") || program.hasPrefix("/usr/") || program.hasPrefix("/System/") {
+                continue
+            }
+            if !FileManager.default.isExecutableFile(atPath: program) { continue }
+            if isSigned(program) { continue }
+            out.append(ProtectFinding(
+                id: "unsigned-\(url.lastPathComponent)",
+                title: Line.proper(url.deletingPathExtension().lastPathComponent),
+                subtitle: Copy.unsignedAgent,
+                severity: .medium,
+                url: url,
+                bytes: 0,
+                selected: false,
+                kind: .removeAgent
+            ))
+        }
+        return out
+    }
+
+    private static func hostsFinding() -> ProtectFinding? {
+        let url = URL(fileURLWithPath: "/etc/hosts")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        var extra = 0
+        for line in text.split(whereSeparator: \.isNewline) {
+            let s = line.trimmingCharacters(in: .whitespaces)
+            if s.isEmpty || s.hasPrefix("#") { continue }
+            if s.contains("127.0.0.1") || s.contains("::1") || s.contains("255.255.255.255") { continue }
+            extra += 1
+        }
+        guard extra >= 3 else { return nil }
+        return ProtectFinding(
+            id: "hosts",
+            title: Copy.hostsTouched,
+            subtitle: Copy.hostsTouchedSub,
+            severity: .medium,
+            url: url,
+            bytes: 0,
+            selected: false,
+            kind: .advice
+        )
+    }
+
+    // MARK: Startup
+
+    private static func launchAgents() -> [StartupRow] {
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents")
+        guard let kids = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+            return []
+        }
+        var rows: [StartupRow] = []
+        for url in kids where url.pathExtension == "plist" {
+            let ours = url.lastPathComponent.contains("CleanAlephaMac98")
+            let dict = plist(url) ?? [:]
+            let label = (dict["Label"] as? String) ?? url.deletingPathExtension().lastPathComponent
+            let run = dict["RunAtLoad"] as? Bool ?? false
+            let program = programPath(dict)
+            let apple = program.hasPrefix("/System/") || program.contains("com.apple")
+            rows.append(StartupRow(
+                id: url.path,
+                name: label,
+                detail: ours ? Copy.ourAgent : (run ? Copy.runsAtLogin : Copy.agentLoaded),
+                url: url,
+                ours: ours,
+                apple: apple,
+                runAtLoad: run,
+                selected: false,
+                kind: .removeAgent
+            ))
+        }
+        return rows
+    }
+
+    private static func loginItems() -> [StartupRow] {
+        let result = runAppleScript("tell application \"System Events\" to get the name of every login item")
+        let names = result.output.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let pathsResult = runAppleScript("tell application \"System Events\" to get the path of every login item")
+        let paths = pathsResult.output.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        var rows: [StartupRow] = []
+        for (i, name) in names.enumerated() {
+            let path = i < paths.count ? paths[i] : ""
+            let url = path.isEmpty
+                ? FileManager.default.homeDirectoryForCurrentUser
+                : URL(fileURLWithPath: path)
+            let apple = path.hasPrefix("/System/") || path.hasPrefix("/Applications/") && name.contains("Photos")
+            rows.append(StartupRow(
+                id: "login-\(name)",
+                name: name,
+                detail: Copy.loginItem,
+                url: url,
+                ours: false,
+                apple: apple,
+                runAtLoad: true,
+                selected: false,
+                kind: .removeLoginItem
+            ))
+        }
+        return rows
+    }
+
+    private static func plist(_ url: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
+    }
+
+    private static func programPath(_ dict: [String: Any]) -> String {
+        if let args = dict["ProgramArguments"] as? [String], let first = args.first { return first }
+        return dict["Program"] as? String ?? ""
+    }
+
+    private static func isSigned(_ path: String) -> Bool {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        task.arguments = ["-v", path]
+        task.standardOutput = Pipe()
+        task.standardError = Pipe()
+        do { try task.run() } catch { return false }
+        task.waitUntilExit()
+        return task.terminationStatus == 0
+    }
+}
+
+extension FindingSeverity {
+    var sort: Int {
+        switch self {
+        case .high: 0
+        case .medium: 1
+        case .info: 2
+        }
+    }
+}

@@ -1,7 +1,9 @@
 import Foundation
 
 enum Module: String, CaseIterable, Identifiable, Sendable {
-    case smart, junk, mail, trash, leftovers, large, browsers, dev, messengers, space, tools
+    case smart, junk, mail, trash, leftovers, large, browsers, dev, messengers
+    case pulse, protect, startup
+    case space, tools
     var id: String { rawValue }
 
     var name: Line {
@@ -15,6 +17,9 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .browsers: Copy.moduleBrowsers
         case .dev: Copy.moduleDev
         case .messengers: Copy.moduleMessengers
+        case .pulse: Copy.modulePulse
+        case .protect: Copy.moduleProtect
+        case .startup: Copy.moduleStartup
         case .space: Copy.moduleSpace
         case .tools: Copy.moduleTools
         }
@@ -31,6 +36,9 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .browsers: Copy.subBrowsers
         case .dev: Copy.subDev
         case .messengers: Copy.subMessengers
+        case .pulse: Copy.subPulse
+        case .protect: Copy.subProtect
+        case .startup: Copy.subStartup
         case .space, .tools: Line(ru: "", en: "")
         }
     }
@@ -38,23 +46,33 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
     var isCleanupModule: Bool {
         switch self {
         case .smart, .junk, .mail, .trash, .leftovers, .large, .browsers, .dev, .messengers: true
-        case .space, .tools: false
+        case .pulse, .protect, .startup, .space, .tools: false
+        }
+    }
+
+    var isLiveModule: Bool {
+        switch self {
+        case .pulse, .protect, .startup: true
+        default: false
         }
     }
 
     var suggestsFDA: Bool {
         switch self {
-        case .smart, .mail, .browsers, .messengers: true
+        case .smart, .mail, .browsers, .messengers, .protect: true
         default: false
         }
     }
 }
 
-enum CleanKind: Sendable {
+enum CleanKind: Sendable, Equatable {
     case wipeChildren
     case safariNetworkCache
     case deleteItem
     case emptyTrash
+    case advice
+    case removeAgent
+    case removeLoginItem
 }
 
 struct JunkItem: Identifiable, Equatable, Sendable {

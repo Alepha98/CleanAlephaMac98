@@ -10,6 +10,9 @@ struct ShellView: View {
         switch state.module {
         case .space: "space"
         case .tools: "tools"
+        case .pulse: "pulse"
+        case .protect: "protect"
+        case .startup: "startup"
         default: "scan"
         }
     }
@@ -30,6 +33,9 @@ struct ShellView: View {
                     switch state.module {
                     case .space: SpaceView()
                     case .tools: ToolsView()
+                    case .pulse: PulseView()
+                    case .protect: ProtectView()
+                    case .startup: StartupView()
                     default: ScanView()
                     }
                 }
@@ -154,6 +160,8 @@ struct SidebarView: View {
         [
             (Copy.scanGroup.t(lang), [.smart]),
             (Copy.cleanGroup.t(lang), [.junk, .mail, .trash, .leftovers, .large, .browsers, .dev, .messengers]),
+            (Copy.liveGroup.t(lang), [.pulse, .startup]),
+            (Copy.guardGroup.t(lang), [.protect]),
             (Copy.systemGroup.t(lang), [.space, .tools])
         ]
     }
@@ -277,6 +285,13 @@ private struct SidebarRow: View {
     @State private var hover = false
 
     private var sizeHint: String? {
+        if module == .pulse, let p = state.pulse {
+            return p.pressure.title.t(lang)
+        }
+        if module == .protect {
+            let n = state.protectFindings.filter { $0.severity == .high }.count
+            return n > 0 ? "\(n)" : nil
+        }
         guard module.isCleanupModule, state.hasScanned(module) else { return nil }
         let b = state.sidebarBytes(for: module)
         guard b > 0 else { return nil }
@@ -324,8 +339,8 @@ private struct SidebarRow: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .opacity(enabled ? 1 : (selected ? 0.72 : 0.45))
-        .help("\(module.name.t(lang)) · \(module.shortcutHint)")
-        .keyboardShortcut(module.keyEquivalent, modifiers: .command)
+        .help(module.shortcutHint.isEmpty ? module.name.t(lang) : "\(module.name.t(lang)) · \(module.shortcutHint)")
+        .modifier(CommandShortcut(module: module))
         .accessibilityLabel(sizeHint.map { "\(module.name.t(lang)), \($0)" } ?? module.name.t(lang))
         .accessibilityHint(module.shortcutHint)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
@@ -336,7 +351,7 @@ private struct SidebarRow: View {
 }
 
 extension Module {
-    var keyEquivalent: KeyEquivalent {
+    var keyEquivalent: KeyEquivalent? {
         switch self {
         case .smart: "1"
         case .junk: "2"
@@ -349,6 +364,7 @@ extension Module {
         case .messengers: "9"
         case .space: "0"
         case .tools: "-"
+        case .pulse, .protect, .startup: nil
         }
     }
 
@@ -365,6 +381,18 @@ extension Module {
         case .messengers: "⌘9"
         case .space: "⌘0"
         case .tools: "⌘-"
+        case .pulse, .protect, .startup: ""
+        }
+    }
+}
+
+private struct CommandShortcut: ViewModifier {
+    var module: Module
+    func body(content: Content) -> some View {
+        if let key = module.keyEquivalent {
+            content.keyboardShortcut(key, modifiers: .command)
+        } else {
+            content
         }
     }
 }

@@ -46,9 +46,11 @@ extension EnvironmentValues {
 
 /// UX writer table: Russian is source, English is written, not machine-translated (TZ-03 §28 / §10).
 enum Copy {
-    static let personalMac = Line(ru: "личный Mac", en: "this Mac")
+    static let personalMac = Line(ru: "для любого Mac", en: "for any Mac")
     static let scanGroup = Line(ru: "Скан", en: "Scan")
     static let cleanGroup = Line(ru: "Очистка", en: "Clean")
+    static let liveGroup = Line(ru: "Живое", en: "Live")
+    static let guardGroup = Line(ru: "Защита", en: "Guard")
     static let systemGroup = Line(ru: "Система", en: "System")
 
     static let scan = Line(ru: "Сканировать", en: "Scan")
@@ -205,6 +207,87 @@ enum Copy {
     static let selectedOff = Line(ru: "не выбрано", en: "not selected")
     static let defaultOff = Line(ru: "по умолчанию выкл", en: "off by default")
 
+    static let liveRefresh = Line(ru: "Обновить", en: "Refresh")
+    static let modulePulse = Line(ru: "Память", en: "Memory")
+    static let moduleProtect = Line(ru: "Проверка", en: "Check")
+    static let moduleStartup = Line(ru: "Автозагрузка", en: "Startup")
+    static let subPulse = Line(
+        ru: "Кто жрёт RAM. Вкладки называем — браузер не закрываем.",
+        en: "What's using RAM. We name tabs — we don't quit the browser."
+    )
+    static let subProtect = Line(
+        ru: "Известный adware и странные агенты. Это не сигнатурный антивирус.",
+        en: "Known adware and odd agents. Not a signature antivirus."
+    )
+    static let subStartup = Line(
+        ru: "Логин-итемы и LaunchAgents этого пользователя.",
+        en: "Login items and this user's LaunchAgents."
+    )
+    static let weDontQuitBrowsers = Line(
+        ru: "Браузер не закрываем. Если вкладка лишняя — закрой её сам.",
+        en: "We don't quit the browser. Close the tab yourself if you don't need it."
+    )
+    static let showTab = Line(ru: "Показать вкладку", en: "Show tab")
+    static let estimateBadge = Line(ru: "оценка", en: "estimate")
+    static let recommendBadge = Line(ru: "совет", en: "tip")
+    static let needAutomation = Line(
+        ru: "macOS не дал прочитать вкладки. Разреши Автоматизацию для Safari/Chrome — мы только читаем, не закрываем.",
+        en: "macOS blocked tab reading. Allow Automation for Safari/Chrome — we only read, we don't quit."
+    )
+    static let tabsTitle = Line(ru: "Вкладки", en: "Tabs")
+    static let appsTitle = Line(ru: "Кто держит память", en: "What's holding RAM")
+    static let pulseIdle = Line(ru: "Нажми Обновить — снимем давление памяти и вкладки.", en: "Hit Refresh — we'll read memory pressure and tabs.")
+    static let ramHonest = Line(
+        ru: "RAM «почистить» кнопкой нельзя — macOS так не работает. Можно закрыть тяжёлую вкладку самому.",
+        en: "There's no honest Free RAM button — macOS doesn't work that way. Close a heavy tab yourself."
+    )
+    static let appRamHint = Line(
+        ru: "Процесс живой. Мы его не убиваем — это рекомендация.",
+        en: "The process is running. We don't kill it — this is a recommendation."
+    )
+    static let pressureNormal = Line(ru: "Памяти хватает", en: "Memory is fine")
+    static let pressureWarn = Line(ru: "Память поджимает", en: "Memory is tight")
+    static let pressureCritical = Line(ru: "Mac уходит в своп", en: "This Mac is swapping")
+    static let protectClear = Line(ru: "Типичного adware не видно", en: "No typical adware in sight")
+    static let protectClearSub = Line(
+        ru: "Смотрели приложения, агенты и hosts. Это не полная антивирусная проверка.",
+        en: "We looked at apps, agents, and hosts. This is not a full antivirus pass."
+    )
+    static let notAntivirus = Line(
+        ru: "Ищем известный Mac-adware и неподписанные агенты пользователя. Не Касперский и не сигнатуры всех вирусов мира.",
+        en: "We look for known Mac adware and unsigned user agents. Not Kaspersky, not every virus signature on earth."
+    )
+    static let knownPUP = Line(ru: "известный мусор", en: "known junk")
+    static let knownPUPSupport = Line(ru: "папка известного adware", en: "known adware folder")
+    static let adwareAgent = Line(ru: "агент известного adware", en: "known adware agent")
+    static let unsignedAgent = Line(
+        ru: "LaunchAgent без подписи, не из Applications. Совет — не трогаем сами.",
+        en: "Unsigned LaunchAgent, not from Applications. A tip — we don't touch it ourselves."
+    )
+    static let hostsTouched = Line(ru: "Файл hosts необычный", en: "The hosts file looks unusual")
+    static let hostsTouchedSub = Line(
+        ru: "Лишние редиректы. Открой в редакторе сам — /etc/hosts мы не правим.",
+        en: "Extra redirects. Open it yourself — we don't edit /etc/hosts."
+    )
+    static let ourAgent = Line(ru: "наш агент", en: "our agent")
+    static let runsAtLogin = Line(ru: "стартует при входе", en: "starts at login")
+    static let agentLoaded = Line(ru: "LaunchAgent пользователя", en: "User LaunchAgent")
+    static let loginItem = Line(ru: "элемент входа", en: "login item")
+    static let disableAgent = Line(ru: "Убрать выбранное", en: "Remove selected")
+
+    static func ramLine(used: Int64, total: Int64) -> Line {
+        Line(
+            ru: "Занято \(ByteFormat.string(used, .ru)) из \(ByteFormat.string(total, .ru))",
+            en: "Using \(ByteFormat.string(used, .en)) of \(ByteFormat.string(total, .en))"
+        )
+    }
+
+    static func swapLine(_ bytes: Int64) -> Line {
+        Line(
+            ru: "Своп \(ByteFormat.string(bytes, .ru)) — Mac уже выгружает на диск",
+            en: "Swap \(ByteFormat.string(bytes, .en)) — this Mac is paging to disk"
+        )
+    }
     static let moduleSmart = Line(ru: "Умный скан", en: "Smart Scan")
     static let moduleJunk = Line(ru: "Системный мусор", en: "System junk")
     static let moduleMail = Line(ru: "Почта", en: "Mail")

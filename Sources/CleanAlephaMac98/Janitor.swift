@@ -1,3 +1,5 @@
+import AppKit
+import Darwin
 import Foundation
 
 struct CleanOutcome: Sendable {
@@ -32,6 +34,12 @@ enum Janitor {
             return safariCaches(item.url)
         case .wipeChildren:
             return wipeChildren(item.url)
+        case .advice:
+            return .alreadyGone(counted: 0)
+        case .removeAgent:
+            return removeAgent(item.url)
+        case .removeLoginItem:
+            return removeLoginItem(item)
         }
     }
 
@@ -131,5 +139,41 @@ enum Janitor {
         let after = DiskSizer.bytes(at: url)
         let freed = max(0, before - after)
         return CleanOutcome(freed: freed, failed: anyFail && after > 16_384, leftover: after)
+    }
+
+    private static func removeAgent(_ url: URL) -> CleanOutcome {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let p = url.standardizedFileURL.path
+        guard p.hasPrefix(home), p.contains("/Library/LaunchAgents/"), url.pathExtension == "plist" else {
+            return .refused(leftover: 0)
+        }
+        if url.lastPathComponent.contains("CleanAlephaMac98") {
+            return .refused(leftover: 0)
+        }
+        let label = url.deletingPathExtension().lastPathComponent
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        task.arguments = ["bootout", "gui/\(getuid())/\(label)"]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        try? task.run()
+        task.waitUntilExit()
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            return .refused(leftover: DiskSizer.bytes(at: url))
+        }
+        return CleanOutcome(freed: 0, failed: false, leftover: 0)
+    }
+
+    private static func removeLoginItem(_ item: JunkItem) -> CleanOutcome {
+        let name = item.title.ru.replacingOccurrences(of: "\"", with: "")
+        guard !name.isEmpty else { return .refused(leftover: 0) }
+        let source = "tell application \"System Events\" to delete login item \"\(name)\""
+        var error: NSDictionary?
+        guard let script = NSAppleScript(source: source) else { return .refused(leftover: 0) }
+        _ = script.executeAndReturnError(&error)
+        if error != nil { return .refused(leftover: 0) }
+        return CleanOutcome(freed: 0, failed: false, leftover: 0)
     }
 }

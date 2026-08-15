@@ -46,6 +46,10 @@ final class AppState {
     var scheduleEnabled: Bool = ScheduleStore.loadEnabled()
     var scheduleSlots: [ScheduleSlot] = ScheduleStore.loadSlots()
     var scheduleNote: Line?
+    var pulse: PulseSnapshot?
+    var protectFindings: [ProtectFinding] = []
+    var startupRows: [StartupRow] = []
+    var liveBusy = false
 
     var copyLang: CopyLang { language.resolved() }
 
@@ -129,7 +133,7 @@ final class AppState {
     }
 
     func hasScanned(_ m: Module) -> Bool {
-        if m == .space || m == .tools { return false }
+        if m == .space || m == .tools || m.isLiveModule { return false }
         if scannedModules.contains(.smart) { return true }
         if m == .smart { return !scannedModules.isEmpty }
         return scannedModules.contains(m)
@@ -140,7 +144,7 @@ final class AppState {
     }
 
     func sidebarBytes(for module: Module) -> Int64 {
-        if module == .space || module == .tools { return 0 }
+        if module == .space || module == .tools || module.isLiveModule { return 0 }
         if module == .smart {
             return items.filter { $0.bytes > 0 }.reduce(0) { $0 + $1.bytes }
         }
@@ -296,6 +300,10 @@ final class AppState {
     @MainActor
     func requestScan() {
         guard canScan else { return }
+        if module.isLiveModule {
+            refreshLive(module)
+            return
+        }
         if !module.isCleanupModule {
             module = .smart
         }
@@ -514,6 +522,86 @@ final class AppState {
         GlassTick.play()
         withAnimation(Motion.easeMicro) {
             items.removeAll { $0.bytes <= 0 }
+        }
+    }
+
+    func refreshLive(_ module: Module) {
+        guard module.isLiveModule, !liveBusy else { return }
+        liveBusy = true
+        Task { @MainActor in
+            switch module {
+            case .pulse:
+                pulse = LiveProbe.pulse()
+            case .protect:
+                let rows = await Background.run { LiveProbe.protect() }
+                protectFindings = rows
+            case .startup:
+                startupRows = LiveProbe.startup()
+            default:
+                break
+            }
+            liveBusy = false
+        }
+    }
+
+    func toggleProtect(_ id: String) {
+        guard let i = protectFindings.firstIndex(where: { $0.id == id }) else { return }
+        guard protectFindings[i].kind != .advice else { return }
+        protectFindings[i].selected.toggle()
+    }
+
+    func toggleStartup(_ id: String) {
+        guard let i = startupRows.firstIndex(where: { $0.id == id }) else { return }
+        let row = startupRows[i]
+        guard !row.ours, !row.apple else { return }
+        startupRows[i].selected.toggle()
+    }
+
+    func cleanProtect() {
+        guard !liveBusy else { return }
+        liveBusy = true
+        let jobs = protectFindings.filter { $0.selected && $0.kind != .advice }
+        Task { @MainActor in
+            for finding in jobs {
+                let item = JunkItem(
+                    id: finding.id,
+                    module: .protect,
+                    title: finding.title,
+                    subtitle: finding.subtitle,
+                    url: finding.url ?? FileManager.default.homeDirectoryForCurrentUser,
+                    bytes: finding.bytes,
+                    selected: true,
+                    kind: finding.kind,
+                    keepsLogins: false
+                )
+                _ = await Background.run { Janitor.clean(item) }
+            }
+            protectFindings = await Background.run { LiveProbe.protect() }
+            liveBusy = false
+        }
+    }
+
+    func cleanStartup() {
+        guard !liveBusy else { return }
+        liveBusy = true
+        let jobs = startupRows.filter { $0.selected && !$0.ours && !$0.apple }
+        Task { @MainActor in
+            for row in jobs {
+                let item = JunkItem(
+                    id: row.id,
+                    module: .startup,
+                    title: Line.proper(row.name),
+                    subtitle: row.detail,
+                    url: row.url,
+                    bytes: 0,
+                    selected: true,
+                    kind: row.kind,
+                    keepsLogins: false
+                )
+                _ = await Background.run { Janitor.clean(item) }
+            }
+            startupRows = await Background.run { LiveProbe.startup() }
+            liveBusy = false
         }
     }
 }
