@@ -21,6 +21,7 @@
   <img src="https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-6B4A55?style=flat-square" alt="Universal">
   <img src="https://img.shields.io/github/license/Alepha98/CleanAlephaMac98?style=flat-square&color=C45C6A" alt="MIT">
   <img src="https://img.shields.io/github/downloads/Alepha98/CleanAlephaMac98/total?style=flat-square&color=C45C6A" alt="Downloads">
+  <img src="https://img.shields.io/github/actions/workflow/status/Alepha98/CleanAlephaMac98/build.yml?style=flat-square" alt="Build">
 </p>
 
 <p align="center">
