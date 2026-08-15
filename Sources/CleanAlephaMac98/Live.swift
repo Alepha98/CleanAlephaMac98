@@ -71,10 +71,9 @@ struct StartupRow: Identifiable, Sendable, Equatable {
 }
 
 enum LiveProbe {
-    static func pulse() -> PulseSnapshot {
+    static func pulseMemory() -> PulseSnapshot {
         let mem = memory()
         let apps = topApps()
-        let (tabs, note) = browserTabs(apps: apps)
         return PulseSnapshot(
             total: mem.total,
             used: mem.used,
@@ -83,9 +82,17 @@ enum LiveProbe {
             swap: mem.swap,
             pressure: mem.pressure,
             apps: apps,
-            tabs: tabs,
-            tabAccess: note
+            tabs: [],
+            tabAccess: nil
         )
+    }
+
+    static func pulseTabs(into snap: PulseSnapshot) -> PulseSnapshot {
+        let (tabs, note) = browserTabs(apps: snap.apps)
+        var next = snap
+        next.tabs = tabs
+        next.tabAccess = note
+        return next
     }
 
     static func protect() -> [ProtectFinding] {
@@ -249,19 +256,19 @@ enum LiveProbe {
     }
 
     private static func browserTabs(apps: [LiveApp]) -> ([LiveTab], Line?) {
-        let browsers: [(app: String, scriptName: String)] = [
-            ("Safari", "Safari"),
-            ("Google Chrome", "Google Chrome"),
-            ("Microsoft Edge", "Microsoft Edge"),
-            ("Brave Browser", "Brave Browser"),
-            ("Chromium", "Chromium"),
-            ("Yandex", "Yandex"),
-            ("Arc", "Arc")
+        let browsers: [(app: String, scriptName: String, bundles: [String])] = [
+            ("Safari", "Safari", ["com.apple.Safari"]),
+            ("Google Chrome", "Google Chrome", ["com.google.Chrome"]),
+            ("Microsoft Edge", "Microsoft Edge", ["com.microsoft.edgemac"]),
+            ("Brave Browser", "Brave Browser", ["com.brave.Browser"]),
+            ("Chromium", "Chromium", ["org.chromium.Chromium"]),
+            ("Yandex", "Yandex", ["ru.yandex.desktop.yandex-browser", "ru.yandex.YandexBrowser"]),
+            ("Arc", "Arc", ["company.thebrowser.Browser"])
         ]
         var tabs: [LiveTab] = []
         var denied = false
         for spec in browsers {
-            guard apps.contains(where: { $0.name == spec.app }) || spec.app == "Safari" else { continue }
+            guard browserRunning(name: spec.app, bundles: spec.bundles) else { continue }
             let result = runAppleScript(tabScript(for: spec.scriptName))
             if result.denied { denied = true }
             let rss = apps.first(where: { $0.name == spec.app })?.bytes ?? 0
@@ -275,6 +282,13 @@ enum LiveProbe {
         tabs.sort { $0.estimate > $1.estimate }
         let note: Line? = denied ? Copy.needAutomation : (tabs.isEmpty ? nil : Copy.weDontQuitBrowsers)
         return (Array(tabs.prefix(40)), note)
+    }
+
+    private static func browserRunning(name: String, bundles: [String]) -> Bool {
+        NSWorkspace.shared.runningApplications.contains { app in
+            if let id = app.bundleIdentifier, bundles.contains(id) { return true }
+            return app.localizedName == name
+        }
     }
 
     private static func tabScript(for app: String) -> String {
@@ -329,15 +343,40 @@ enum LiveProbe {
         return out
     }
 
-    private static func runAppleScript(_ source: String) -> (output: String, denied: Bool) {
-        var error: NSDictionary?
-        guard let script = NSAppleScript(source: source) else { return ("", false) }
-        let result = script.executeAndReturnError(&error)
-        if let error {
-            let n = error[NSAppleScript.errorNumber] as? Int ?? 0
-            return ("", n == -1743 || n == -1728)
+    private static func runAppleScript(_ source: String, seconds: TimeInterval = 4) -> (output: String, denied: Bool) {
+        let wrapped = """
+        with timeout of \(max(1, Int(seconds))) seconds
+        \(source)
+        end timeout
+        """
+        let task = Process()
+        let out = Pipe()
+        let err = Pipe()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", wrapped]
+        task.standardOutput = out
+        task.standardError = err
+        do { try task.run() } catch { return ("", false) }
+
+        let deadline = Date().addingTimeInterval(seconds + 1)
+        while task.isRunning, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
         }
-        return (result.stringValue ?? "", false)
+        if task.isRunning {
+            task.terminate()
+            Thread.sleep(forTimeInterval: 0.15)
+            if task.isRunning {
+                kill(task.processIdentifier, SIGKILL)
+            }
+            return ("", false)
+        }
+
+        let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let errText = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        if errText.contains("(-1743)") || errText.contains("not allowed to send") {
+            return ("", true)
+        }
+        return (text.trimmingCharacters(in: .whitespacesAndNewlines), false)
     }
 
     // MARK: Protect

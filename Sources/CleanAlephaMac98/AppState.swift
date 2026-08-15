@@ -531,12 +531,16 @@ final class AppState {
         Task { @MainActor in
             switch module {
             case .pulse:
-                pulse = LiveProbe.pulse()
+                let mem = await Background.run { LiveProbe.pulseMemory() }
+                pulse = mem
+                let withTabs = await Background.run { LiveProbe.pulseTabs(into: mem) }
+                if self.module == .pulse {
+                    pulse = withTabs
+                }
             case .protect:
-                let rows = await Background.run { LiveProbe.protect() }
-                protectFindings = rows
+                protectFindings = await Background.run { LiveProbe.protect() }
             case .startup:
-                startupRows = LiveProbe.startup()
+                startupRows = await Background.run { LiveProbe.startup() }
             default:
                 break
             }

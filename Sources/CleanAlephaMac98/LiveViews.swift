@@ -159,7 +159,7 @@ private struct TabRow: View {
             }
             MicroBadge(text: Copy.estimateBadge.t(lang), tone: .quiet)
             Button(Copy.showTab.t(lang)) {
-                LiveProbe.revealTab(tab)
+                Task { await Background.run { LiveProbe.revealTab(tab) } }
             }
             .buttonStyle(GhostButton())
         }
