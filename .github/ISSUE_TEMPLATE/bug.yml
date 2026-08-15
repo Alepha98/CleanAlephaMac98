@@ -1,0 +1,28 @@
+name: Bug
+description: Something broke on a Mac
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, what you got.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS
+      placeholder: "15.6 / 14.5 / 26"
+    validations:
+      required: true
+  - type: dropdown
+    id: chip
+    attributes:
+      label: Chip
+      options:
+        - Apple Silicon
+        - Intel
+    validations:
+      required: true

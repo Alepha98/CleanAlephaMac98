@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Build DMG
+        run: zsh packaging/make-dmg.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CleanAlephaMac98.dmg
+          path: dist/CleanAlephaMac98.dmg
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CleanAlephaMac98.dmg
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            ## Install
+            1. Download **CleanAlephaMac98.dmg**
+            2. Open it and drag the app into **Applications**
+            3. First launch: right-click the app → **Open**
+
+            Safari and Chrome logins stay. Add your own exclusions. Set your own schedule.

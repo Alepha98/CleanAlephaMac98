@@ -1,0 +1,11 @@
+.build/
+.swiftpm/
+dist/
+*.dmg
+.DS_Store
+xcuserdata/
+*.xcuserstate
+.idea/
+.vscode/
+Design/
+
