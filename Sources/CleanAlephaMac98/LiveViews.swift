@@ -299,7 +299,7 @@ private struct ProtectRow: View {
         switch finding.severity {
         case .high: Copy.knownPUP
         case .medium: Copy.recommendBadge
-        case .info: Copy.safe
+        case .info: Copy.fineBadge
         }
     }
 }
@@ -384,7 +384,7 @@ private struct StartupRowView: View {
             if row.ours {
                 MicroBadge(text: Copy.ourAgent.t(lang), tone: .safe)
             } else if row.apple {
-                MicroBadge(text: Copy.safe.t(lang), tone: .safe)
+                MicroBadge(text: Copy.appleBadge.t(lang), tone: .safe)
             } else {
                 MicroBadge(text: Copy.recommendBadge.t(lang), tone: .quiet)
             }

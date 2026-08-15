@@ -294,14 +294,14 @@ struct ScanView: View {
         Button(Copy.safe.t(lang)) { state.selectSafeVisible() }
             .buttonStyle(GhostButton())
             .disabled(!state.canSelectSafe)
-            .help("⌘⇧A — \(Copy.fdaHint.t(lang))")
+            .help("⌘⇧A – \(Copy.fdaHint.t(lang))")
     }
 
     private func clearAction() -> some View {
         Button(Copy.deselect.t(lang)) { state.deselectVisible() }
             .buttonStyle(GhostButton())
             .disabled(!state.canDeselect)
-            .help("⌘⇧D — \(Copy.deselectHint.t(lang))")
+            .help("⌘⇧D – \(Copy.deselectHint.t(lang))")
     }
 
     private func results(orb: CGFloat, hPad: CGFloat, contentWidth: CGFloat) -> some View {

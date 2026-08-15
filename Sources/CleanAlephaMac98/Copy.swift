@@ -46,11 +46,11 @@ extension EnvironmentValues {
 
 /// UX writer table: Russian is source, English is written, not machine-translated (TZ-03 §28 / §10).
 enum Copy {
-    static let personalMac = Line(ru: "для любого Mac", en: "for any Mac")
+    static let personalMac = Line(ru: "для Mac", en: "for Mac")
     static let scanGroup = Line(ru: "Скан", en: "Scan")
     static let cleanGroup = Line(ru: "Очистка", en: "Clean")
-    static let liveGroup = Line(ru: "Живое", en: "Live")
-    static let guardGroup = Line(ru: "Защита", en: "Guard")
+    static let liveGroup = Line(ru: "Сейчас", en: "Now")
+    static let guardGroup = Line(ru: "Проверки", en: "Checks")
     static let systemGroup = Line(ru: "Система", en: "System")
 
     static let scan = Line(ru: "Сканировать", en: "Scan")
@@ -70,15 +70,15 @@ enum Copy {
     static let fullDisk = Line(ru: "Полный доступ к диску", en: "Full Disk Access")
     static let openSettings = Line(ru: "Открыть настройки", en: "Open Settings")
 
-    static let ready = Line(ru: "Готов очистить этот Mac", en: "Ready to clean this Mac")
-    static let scanningMac = Line(ru: "Сканирую Mac", en: "Scanning this Mac")
+    static let ready = Line(ru: "Можно сканировать", en: "Ready to scan")
+    static let scanningMac = Line(ru: "Сканирую Mac", en: "Scanning the Mac")
     static let canClean = Line(ru: "Можно очистить", en: "Can clean")
-    static let loginsStay = Line(ru: "Входы Safari и Chrome сохраняем", en: "Safari and Chrome logins stay")
-    static let loginsBadge = Line(ru: "логины целы", en: "logins intact")
-    static let needFDA = Line(ru: "Нужен полный доступ к диску", en: "Full Disk Access is needed")
+    static let loginsStay = Line(ru: "Логины Safari и Chrome не трогаем", en: "Safari and Chrome logins stay")
+    static let loginsBadge = Line(ru: "логины целы", en: "logins stay")
+    static let needFDA = Line(ru: "Нужен полный доступ к диску", en: "Needs Full Disk Access")
     static let needFDAQuiet = Line(
-        ru: "Нужен полный доступ, если хочешь видеть Telegram и Safari",
-        en: "Full Disk Access is needed to see Telegram and Safari"
+        ru: "Без полного доступа не видно Telegram и Safari",
+        en: "Without Full Disk Access, Telegram and Safari stay hidden"
     )
     static let dontTouch = Line(ru: "Не трогаем", en: "We don't touch")
     static let emptied = Line(ru: "снято", en: "cleared")
@@ -90,37 +90,37 @@ enum Copy {
     static let foundLabel = Line(ru: "найдено", en: "found")
 
     static let idleHint = Line(
-        ru: "Нажми «Сканировать» — разберём кэши, логи, мессенджеры. Входы Safari/Chrome не трогаем.",
-        en: "Press Scan — we'll sort caches, logs, messengers. Safari and Chrome logins stay."
+        ru: "Нажми «Сканировать». Кэши, логи, мессенджеры. Логины Safari и Chrome не трогаем.",
+        en: "Press Scan. Caches, logs, messengers. Safari and Chrome logins stay."
     )
-    static let layerUnscanned = Line(ru: "Этот слой ещё не сканировали.", en: "This layer hasn't been scanned yet.")
-    static let foldersClean = Line(ru: "В открытых папках чисто.", en: "Open folders are clean.")
+    static let layerUnscanned = Line(ru: "Этот слой ещё не сканировали.", en: "Haven't scanned this yet.")
+    static let foldersClean = Line(ru: "В открытых папках чисто.", en: "Those folders are clean.")
     static let foldersCleanFDA = Line(
-        ru: "В открытых папках чисто. Для Telegram/Safari нужен полный доступ к диску.",
-        en: "Open folders are clean. Telegram and Safari need Full Disk Access."
+        ru: "В открытых папках чисто. Telegram и Safari без полного доступа не видны.",
+        en: "Those folders are clean. Telegram and Safari need Full Disk Access."
     )
     static let layerClean = Line(ru: "В этом слое чисто", en: "This layer is clean")
     static let done = Line(ru: "Готово", en: "Done")
-    static let emptySmart = Line(ru: "Кэш и мусор в открытых папках не нашлись.", en: "No cache or junk in the folders we can see.")
+    static let emptySmart = Line(ru: "Кэша и мусора в открытых папках нет.", en: "No cache or junk in the open folders.")
     static let emptyFDA = Line(
-        ru: "Для Telegram и Safari нужен полный доступ к диску.",
+        ru: "Telegram и Safari без полного доступа не видны.",
         en: "Telegram and Safari need Full Disk Access."
     )
 
     static let diskTitle = Line(ru: "Обзор диска", en: "Disk")
-    static let diskFail = Line(ru: "Не удалось прочитать ёмкость диска.", en: "Couldn't read disk capacity.")
+    static let diskFail = Line(ru: "Ёмкость диска не прочиталась.", en: "Couldn't read the disk.")
     static let used = Line(ru: "Занято", en: "Used")
     static let free = Line(ru: "Свободно", en: "Free")
     static let total = Line(ru: "Всего", en: "Total")
     static let ringNote = Line(
-        ru: "Защищённые папки — отдельный сегмент, не дыра в кольце.",
-        en: "Protected folders are a segment, not a hole in the ring."
+        ru: "Защищённые папки – отдельный кусок кольца, не дыра.",
+        en: "Protected folders are a slice of the ring, not a hole."
     )
 
     static let toolsTitle = Line(ru: "Обслуживание", en: "Maintenance")
     static let toolsLead = Line(
-        ru: "Своё расписание и свои исключения. По расписанию снимаем только кэши — медиа и корзину не трогаем.",
-        en: "Your schedule and your exclusions. Scheduled runs clear caches only — media and Trash stay."
+        ru: "Свои часы, свои исключения. По таймеру снимаются только кэши – не медиа и не корзина.",
+        en: "Your hours, your exclusions. The timer only clears caches – not media, not Trash."
     )
     static let schedule = Line(ru: "Расписание", en: "Schedule")
     static let autoClean = Line(ru: "Автоочистка", en: "Auto-clean")
@@ -128,35 +128,35 @@ enum Copy {
     static let removeTime = Line(ru: "Убрать", en: "Remove")
     static let exclusions = Line(ru: "Исключения", en: "Exclusions")
     static let exclusionsLead = Line(
-        ru: "Эти папки не сканируем и не чистим. Можно добавить свои — без правки приложения.",
-        en: "We don't scan or clean these folders. Add your own — no need to edit the app."
+        ru: "Эти папки не сканируем и не чистим. Свои можно добавить тут.",
+        en: "We skip these folders. You can add your own here."
     )
     static let addFolder = Line(ru: "Добавить папку", en: "Add a folder")
     static let addFolderHelp = Line(
-        ru: "Выбранная папка больше не попадёт в очистку.",
-        en: "The chosen folder will stay out of cleanup."
+        ru: "Эту папку больше не чистим.",
+        en: "We won't clean this folder."
     )
     static let removeExclusion = Line(ru: "Убрать", en: "Remove")
     static let excludeThis = Line(ru: "Не трогать эту папку", en: "Don't touch this folder")
     static let scheduleFail = Line(
-        ru: "Не удалось поставить расписание. Проверь, что приложение лежит в папке Applications.",
-        en: "Couldn't install the schedule. Make sure the app is in Applications."
+        ru: "Расписание не встало. Проверь, что приложение в папке Applications.",
+        en: "Couldn't set the schedule. Keep the app in Applications."
     )
     static let actions = Line(ru: "Действия", en: "Actions")
     static let agentWaiting = Line(
-        ru: "Расписание стоит. Запуска ещё не было — или лог пуст.",
-        en: "Schedule is on. No run yet — or the log is empty."
+        ru: "Расписание стоит. Запуска ещё не было, или лог пуст.",
+        en: "Schedule is on. No run yet, or the log is empty."
     )
     static let agentOff = Line(
-        ru: "Автоочистка выключена. Включи — и кэши будут сниматься сами в выбранные часы.",
-        en: "Auto-clean is off. Turn it on and caches will clear at the hours you pick."
+        ru: "Автоочистка выключена. Включи, и кэши будут сниматься в выбранные часы.",
+        en: "Auto-clean is off. Turn it on and caches clear at the hours you pick."
     )
     static let logOpenedFolder = Line(
-        ru: "Файла лога ещё нет — открыта папка Logs.",
-        en: "No log file yet — opened the Logs folder."
+        ru: "Лога ещё нет, открыта папка Logs.",
+        en: "No log yet. Opened the Logs folder."
     )
-    static let logMissing = Line(ru: "Лог пока не создан.", en: "The log isn't there yet.")
-    static let logOpenFail = Line(ru: "Не удалось открыть лог.", en: "Couldn't open the log.")
+    static let logMissing = Line(ru: "Лога пока нет.", en: "No log yet.")
+    static let logOpenFail = Line(ru: "Лог не открылся.", en: "Couldn't open the log.")
 
     static let shortcuts = Line(ru: "Сочетания клавиш", en: "Keyboard shortcuts")
     static let appearanceMenu = Line(ru: "Оформление", en: "Appearance")
@@ -164,8 +164,8 @@ enum Copy {
     static let cleanMenu = Line(ru: "Очистка", en: "Clean")
     static let aboutApp = Line(ru: "О CleanAlephaMac98", en: "About CleanAlephaMac98")
     static let aboutCredits = Line(
-        ru: "Клинер для Mac. Входы Safari и Chrome не трогаем.\nИсключения и расписание — в Обслуживании.",
-        en: "A Mac cleaner. Safari and Chrome logins stay.\nExclusions and schedule live in Maintenance."
+        ru: "Клинер для Mac. Логины Safari и Chrome не трогаем.\nРасписание и исключения – в Обслуживании.",
+        en: "Mac cleaner. Safari and Chrome logins stay.\nSchedule and exclusions live in Maintenance."
     )
     static let northernDay = Line(ru: "Северный день", en: "Northern day")
     static let northernNight = Line(ru: "Северная ночь", en: "Northern night")
@@ -177,8 +177,8 @@ enum Copy {
     static let stopScan = Line(ru: "Остановить сканирование", en: "Stop scanning")
     static let stopClean = Line(ru: "Остановить очистку", en: "Stop cleaning")
     static let orbIdle = Line(ru: "Стеклянная колба", en: "Glass flask")
-    static let scanHelp = Line(ru: "⌘R — пройти кэши и мусор", en: "⌘R — walk caches and junk")
-    static let cleanHelp = Line(ru: "⌘↩ — удалить выбранное", en: "⌘↩ — remove the selection")
+    static let scanHelp = Line(ru: "⌘R – пройти кэши и мусор", en: "⌘R – scan caches and junk")
+    static let cleanHelp = Line(ru: "⌘↩ – удалить выбранное", en: "⌘↩ – delete the selection")
     static let laterHelp = Line(ru: "Пропустить. Карточка в сайдбаре останется.", en: "Skip. The sidebar card stays.")
     static let fdaCardHelp = Line(
         ru: "Открыть настройки полного доступа к диску",
@@ -189,19 +189,19 @@ enum Copy {
     static let fdaHint = Line(ru: "кэш и логи, не корзина, история и крупные файлы", en: "caches and logs, not Trash, history, or large files")
     static let deselectHint = Line(ru: "снять галки с видимых карточек", en: "clear checks on visible cards")
     static let leftoverGone = Line(ru: "В /Applications не найдено", en: "Not in /Applications")
-    static let fdaOpenFail = Line(ru: "Не удалось открыть настройки доступа.", en: "Couldn't open access settings.")
-    static let scanBroke = Line(ru: "Сканирование прервалось.", en: "The scan broke off.")
+    static let fdaOpenFail = Line(ru: "Настройки доступа не открылись.", en: "Couldn't open access settings.")
+    static let scanBroke = Line(ru: "Сканирование оборвалось.", en: "The scan broke off.")
     static let scanStoppedEmpty = Line(ru: "Сканирование остановлено.", en: "Scan stopped.")
     static let scanStoppedPartial = Line(
         ru: "Остановлено. Показано то, что успели найти.",
-        en: "Stopped. Showing what we found."
+        en: "Stopped. Here's what we found so far."
     )
     static let cleaningStatus = Line(ru: "Удаляю выбранное…", en: "Removing the selection…")
     static let cleanStoppedEmpty = Line(ru: "Очистка остановлена.", en: "Cleaning stopped.")
-    static let alreadyGone = Line(ru: "Выбранное уже отсутствовало.", en: "The selection was already gone.")
+    static let alreadyGone = Line(ru: "Выбранного уже не было.", en: "That was already gone.")
     static let nothingDeleted = Line(
         ru: "Ничего не удалилось. Проверь полный доступ к диску.",
-        en: "Nothing was deleted. Check Full Disk Access."
+        en: "Nothing got deleted. Check Full Disk Access."
     )
     static let selectedOn = Line(ru: "выбрано", en: "selected")
     static let selectedOff = Line(ru: "не выбрано", en: "not selected")
@@ -212,64 +212,66 @@ enum Copy {
     static let moduleProtect = Line(ru: "Проверка", en: "Check")
     static let moduleStartup = Line(ru: "Автозагрузка", en: "Startup")
     static let subPulse = Line(
-        ru: "Кто жрёт RAM. Вкладки называем — браузер не закрываем.",
-        en: "What's using RAM. We name tabs — we don't quit the browser."
+        ru: "Кто жрёт память. Вкладки покажем, браузер не закроем.",
+        en: "What's eating RAM. We list the tabs, we don't quit the browser."
     )
     static let subProtect = Line(
-        ru: "Известный adware и странные агенты. Это не сигнатурный антивирус.",
-        en: "Known adware and odd agents. Not a signature antivirus."
+        ru: "Известный adware и странные агенты. Не антивирус.",
+        en: "Known adware and odd agents. Not an antivirus."
     )
     static let subStartup = Line(
-        ru: "Логин-итемы и LaunchAgents этого пользователя.",
-        en: "Login items and this user's LaunchAgents."
+        ru: "Что стартует вместе с тобой.",
+        en: "What launches when you log in."
     )
     static let weDontQuitBrowsers = Line(
-        ru: "Браузер не закрываем. Если вкладка лишняя — закрой её сам.",
-        en: "We don't quit the browser. Close the tab yourself if you don't need it."
+        ru: "Браузер сам не закроем. Лишнюю вкладку закрой руками.",
+        en: "We won't quit the browser. Close the extra tab yourself."
     )
     static let showTab = Line(ru: "Показать вкладку", en: "Show tab")
-    static let estimateBadge = Line(ru: "оценка", en: "estimate")
+    static let estimateBadge = Line(ru: "оценка", en: "guess")
     static let recommendBadge = Line(ru: "совет", en: "tip")
     static let needAutomation = Line(
-        ru: "macOS не дал прочитать вкладки. Разреши Автоматизацию для Safari/Chrome — мы только читаем, не закрываем.",
-        en: "macOS blocked tab reading. Allow Automation for Safari/Chrome — we only read, we don't quit."
+        ru: "macOS не дал прочитать вкладки. В Автоматизации разреши Safari и Chrome. Мы только читаем.",
+        en: "macOS blocked the tabs. Allow Automation for Safari and Chrome. We only read them."
     )
     static let tabsTitle = Line(ru: "Вкладки", en: "Tabs")
     static let appsTitle = Line(ru: "Кто держит память", en: "What's holding RAM")
-    static let pulseIdle = Line(ru: "Нажми Обновить — снимем давление памяти и вкладки.", en: "Hit Refresh — we'll read memory pressure and tabs.")
+    static let pulseIdle = Line(ru: "Обнови, посмотрим память и вкладки.", en: "Refresh to see memory and tabs.")
     static let ramHonest = Line(
-        ru: "RAM «почистить» кнопкой нельзя — macOS так не работает. Можно закрыть тяжёлую вкладку самому.",
-        en: "There's no honest Free RAM button — macOS doesn't work that way. Close a heavy tab yourself."
+        ru: "Память кнопкой не освободить. Если тупит – закрой тяжёлую вкладку.",
+        en: "There's no Free RAM button. If it's slow – close a heavy tab."
     )
     static let appRamHint = Line(
-        ru: "Процесс живой. Мы его не убиваем — это рекомендация.",
-        en: "The process is running. We don't kill it — this is a recommendation."
+        ru: "Процесс живой. Мы его не убиваем.",
+        en: "It's running. We won't kill it."
     )
-    static let pressureNormal = Line(ru: "Памяти хватает", en: "Memory is fine")
-    static let pressureWarn = Line(ru: "Память поджимает", en: "Memory is tight")
-    static let pressureCritical = Line(ru: "Mac уходит в своп", en: "This Mac is swapping")
-    static let protectClear = Line(ru: "Типичного adware не видно", en: "No typical adware in sight")
+    static let pressureNormal = Line(ru: "Памяти хватает", en: "Memory's fine")
+    static let pressureWarn = Line(ru: "Память поджимает", en: "Memory's tight")
+    static let pressureCritical = Line(ru: "Уже своп", en: "Already swapping")
+    static let protectClear = Line(ru: "Типичного adware нет", en: "No typical adware")
     static let protectClearSub = Line(
-        ru: "Смотрели приложения, агенты и hosts. Это не полная антивирусная проверка.",
-        en: "We looked at apps, agents, and hosts. This is not a full antivirus pass."
+        ru: "Глянули приложения, агенты и hosts. Не полная проверка.",
+        en: "Looked at apps, agents, and hosts. Not a full scan."
     )
     static let notAntivirus = Line(
-        ru: "Ищем известный Mac-adware и неподписанные агенты пользователя. Не Касперский и не сигнатуры всех вирусов мира.",
-        en: "We look for known Mac adware and unsigned user agents. Not Kaspersky, not every virus signature on earth."
+        ru: "Ищем известный adware и кривые агенты. Не антивирус.",
+        en: "Known adware and odd agents. Not an antivirus."
     )
     static let knownPUP = Line(ru: "известный мусор", en: "known junk")
     static let knownPUPSupport = Line(ru: "папка известного adware", en: "known adware folder")
     static let adwareAgent = Line(ru: "агент известного adware", en: "known adware agent")
     static let unsignedAgent = Line(
-        ru: "LaunchAgent без подписи, не из Applications. Совет — не трогаем сами.",
-        en: "Unsigned LaunchAgent, not from Applications. A tip — we don't touch it ourselves."
+        ru: "LaunchAgent без подписи, не из Applications. Сами не трогаем.",
+        en: "Unsigned LaunchAgent, not from Applications. We won't touch it."
     )
-    static let hostsTouched = Line(ru: "Файл hosts необычный", en: "The hosts file looks unusual")
+    static let hostsTouched = Line(ru: "Файл hosts странный", en: "The hosts file looks off")
     static let hostsTouchedSub = Line(
-        ru: "Лишние редиректы. Открой в редакторе сам — /etc/hosts мы не правим.",
-        en: "Extra redirects. Open it yourself — we don't edit /etc/hosts."
+        ru: "Лишние редиректы. Открой /etc/hosts сам, мы его не правим.",
+        en: "Extra redirects. Open /etc/hosts yourself, we don't edit it."
     )
     static let ourAgent = Line(ru: "наш агент", en: "our agent")
+    static let appleBadge = Line(ru: "Apple", en: "Apple")
+    static let fineBadge = Line(ru: "норм", en: "fine")
     static let runsAtLogin = Line(ru: "стартует при входе", en: "starts at login")
     static let agentLoaded = Line(ru: "LaunchAgent пользователя", en: "User LaunchAgent")
     static let loginItem = Line(ru: "элемент входа", en: "login item")
@@ -284,8 +286,8 @@ enum Copy {
 
     static func swapLine(_ bytes: Int64) -> Line {
         Line(
-            ru: "Своп \(ByteFormat.string(bytes, .ru)) — Mac уже выгружает на диск",
-            en: "Swap \(ByteFormat.string(bytes, .en)) — this Mac is paging to disk"
+            ru: "Своп \(ByteFormat.string(bytes, .ru)). Уже пишет на диск.",
+            en: "Swap \(ByteFormat.string(bytes, .en)). Already paging to disk."
         )
     }
     static let moduleSmart = Line(ru: "Умный скан", en: "Smart Scan")
@@ -301,7 +303,7 @@ enum Copy {
     static let moduleTools = Line(ru: "Обслуживание", en: "Maintenance")
 
     static let subSmart = Line(
-        ru: "Кэш и мусор. Входы Safari и Chrome не трогаем.",
+        ru: "Кэш и мусор. Логины Safari и Chrome не трогаем.",
         en: "Caches and junk. Safari and Chrome logins stay."
     )
     static let subJunk = Line(ru: "Логи и кэши пользователя", en: "User logs and caches")
@@ -309,9 +311,9 @@ enum Copy {
     static let subTrash = Line(ru: "Корзина macOS", en: "macOS Trash")
     static let subLeftovers = Line(ru: "Остатки удалённых приложений", en: "Leftovers from deleted apps")
     static let subLarge = Line(ru: "Крупные файлы, по умолчанию выкл", en: "Large files, off by default")
-    static let subBrowsers = Line(ru: "Сетевой кэш; входы не трогаем", en: "Network cache; logins stay")
-    static let subDev = Line(ru: "npm и кэши редакторов, не Gradle/Simulator", en: "npm and editor caches, not Gradle or Simulator")
-    static let subMessengers = Line(ru: "Медиа и история; история выкл", en: "Media and history; history off")
+    static let subBrowsers = Line(ru: "Сетевой кэш. Логины не трогаем.", en: "Network cache. Logins stay.")
+    static let subDev = Line(ru: "npm и кэши редакторов. Gradle и Simulator не трогаем.", en: "npm and editor caches. Not Gradle or Simulator.")
+    static let subMessengers = Line(ru: "Медиа и история. История выкл.", en: "Media and history. History stays off.")
 
     static func scanning(_ stage: Line) -> Line {
         Line(ru: "Сканирую: \(stage.ru)…", en: "Scanning: \(stage.en)…")
@@ -319,8 +321,8 @@ enum Copy {
 
     static func canClear(_ bytes: Int64) -> Line {
         Line(
-            ru: "Можно снять \(ByteFormat.string(bytes, .ru)). Логины браузеров сохранены.",
-            en: "Can clear \(ByteFormat.string(bytes, .en)). Browser logins stay."
+            ru: "Можно снять \(ByteFormat.string(bytes, .ru)). Логины на месте.",
+            en: "Can clear \(ByteFormat.string(bytes, .en)). Logins stay."
         )
     }
 
@@ -329,8 +331,8 @@ enum Copy {
             return canClear(selected)
         }
         return Line(
-            ru: "Можно снять \(ByteFormat.string(selected, .ru)) из найденных \(ByteFormat.string(found, .ru)). Логины на месте.",
-            en: "Can clear \(ByteFormat.string(selected, .en)) of \(ByteFormat.string(found, .en)) found. Logins stay."
+            ru: "Можно снять \(ByteFormat.string(selected, .ru)) из \(ByteFormat.string(found, .ru)). Логины на месте.",
+            en: "Can clear \(ByteFormat.string(selected, .en)) of \(ByteFormat.string(found, .en)). Logins stay."
         )
     }
 
@@ -339,7 +341,7 @@ enum Copy {
     }
 
     static func doneFreed(_ bytes: Int64) -> Line {
-        Line(ru: "Готово — снято \(ByteFormat.string(bytes, .ru)).", en: "Done — cleared \(ByteFormat.string(bytes, .en)).")
+        Line(ru: "Готово. Снято \(ByteFormat.string(bytes, .ru)).", en: "Done. Cleared \(ByteFormat.string(bytes, .en)).")
     }
 
     static func stoppedFreed(_ bytes: Int64) -> Line {
@@ -348,15 +350,15 @@ enum Copy {
 
     static func emptyDetailFreed(_ bytes: Int64) -> Line {
         Line(
-            ru: "Снято \(ByteFormat.string(bytes, .ru)). Логины браузеров на месте.",
-            en: "Cleared \(ByteFormat.string(bytes, .en)). Browser logins are still there."
+            ru: "Снято \(ByteFormat.string(bytes, .ru)). Логины на месте.",
+            en: "Cleared \(ByteFormat.string(bytes, .en)). Logins stay."
         )
     }
 
     static func someFailed(freed: Int64, failed: Int) -> Line {
         Line(
-            ru: "Снято \(ByteFormat.string(freed, .ru)). \(failed) шт. не удалились — проверь доступ к диску.",
-            en: "Cleared \(ByteFormat.string(freed, .en)). \(failed) didn't delete — check disk access."
+            ru: "Снято \(ByteFormat.string(freed, .ru)). \(failed) шт. не удалились, проверь доступ к диску.",
+            en: "Cleared \(ByteFormat.string(freed, .en)). \(failed) didn't delete – check disk access."
         )
     }
 

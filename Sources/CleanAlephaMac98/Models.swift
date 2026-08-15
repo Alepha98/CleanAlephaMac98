@@ -206,7 +206,7 @@ enum Keep {
             ("Parallels", Line(ru: "Виртуальная машина Windows", en: "Windows virtual machine"), home.appendingPathComponent("Documents/Parallels")),
             ("Gradle", Line(ru: "Кэш сборки Android", en: "Android build cache"), home.appendingPathComponent(".gradle")),
             ("iOS Simulator", Line(ru: "Симуляторы Xcode", en: "Xcode simulators"), home.appendingPathComponent("Library/Developer/CoreSimulator")),
-            ("iPhone symbols", Line(ru: "DeviceSupport — качается заново", en: "DeviceSupport — downloads again"), home.appendingPathComponent("Library/Developer/Xcode/iOS DeviceSupport")),
+            ("iPhone symbols", Line(ru: "DeviceSupport – качается заново", en: "DeviceSupport – downloads again"), home.appendingPathComponent("Library/Developer/Xcode/iOS DeviceSupport")),
             ("Claude VM", Line(ru: "Локальные виртуальные машины Claude", en: "Local Claude VMs"), home.appendingPathComponent("Library/Application Support/Claude/vm_bundles")),
             ("Photos", Line(ru: "Медиатека", en: "Photo library"), home.appendingPathComponent("Pictures/Photos Library.photoslibrary")),
             ("iCloud Personal", Line(ru: "Облачная библиотека", en: "Cloud library"), icloud.appendingPathComponent("Personal")),

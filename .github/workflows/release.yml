@@ -41,9 +41,12 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
-            ## Install
-            1. Download **CleanAlephaMac98.dmg**
-            2. Open it and drag the app into **Applications**
-            3. First launch: right-click the app → **Open**
+            Скачай **CleanAlephaMac98.dmg**, перетащи в Applications.
+            Первый запуск: правый клик → **Открыть**.
 
-            Safari and Chrome logins stay. Add your own exclusions. Set your own schedule.
+            Логины Safari и Chrome не трогаем. Исключения и расписание – свои.
+
+            Download the **.dmg**, drag it into Applications.
+            First launch: right-click → **Open**.
+
+            Safari and Chrome logins stay. Your exclusions, your hours.

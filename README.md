@@ -5,8 +5,8 @@
 <h1 align="center">CleanAlephaMac98</h1>
 
 <p align="center">
-  <strong>Клинер для macOS, который не ломает входы.</strong><br>
-  A Mac cleaner that leaves Safari and Chrome logins alone.
+  <strong>Клинер для Mac. Логины Safari и Chrome не трогаем.</strong><br>
+  A Mac cleaner. Safari and Chrome logins stay.
 </p>
 
 <p align="center">
@@ -24,15 +24,11 @@
   <img src="https://img.shields.io/github/actions/workflow/status/Alepha98/CleanAlephaMac98/build.yml?style=flat-square" alt="Build">
 </p>
 
-<p align="center">
-  <img src="docs/brand/og-banner.png" width="920" alt="CleanAlephaMac98 — northern light, dusty rose">
-</p>
-
 ---
 
 ## Скачать
 
-Нажми кнопку — качается **установщик `.dmg`**, не исходники.
+Кнопка выше – это `.dmg`, не архив с исходниками.
 
 <p align="center">
   <a href="https://github.com/Alepha98/CleanAlephaMac98/releases/latest/download/CleanAlephaMac98.dmg">
@@ -41,39 +37,24 @@
 </p>
 
 1. Открой `CleanAlephaMac98.dmg`
-2. Перетащи приложение в **Applications**
+2. Перетащи в **Applications**
 3. Первый запуск: **правый клик → Открыть**  
-   (подпись Apple Developer пока ad-hoc — Gatekeeper один раз спросит)
-4. Если macOS всё равно ругается: `xattr -cr /Applications/CleanAlephaMac98.app`
+   Подпись пока ad-hoc, Gatekeeper один раз спросит.
+4. Если всё равно орёт: `xattr -cr /Applications/CleanAlephaMac98.app`
 
-Для Сообщений и Telegram включи **Полный доступ к диску** в Системных настройках. Кэши Chrome/Safari чистятся и без этого.
-
----
-
-## Download
-
-Click the button. You get a **`.dmg` installer**, not a zip of source.
-
-1. Open `CleanAlephaMac98.dmg`
-2. Drag the app into **Applications**
-3. First launch: **right-click → Open** (ad-hoc signed; Gatekeeper asks once)
-4. If macOS still blocks it: `xattr -cr /Applications/CleanAlephaMac98.app`
-
-Turn on **Full Disk Access** if you want Messages / Telegram in the scan. Browser caches work without it.
-
----
+Для Сообщений и Telegram включи **Полный доступ к диску**. Кэши Chrome и Safari чистятся и без этого.
 
 ## Что умеет
 
-- **Кэши как у больших клинеров** — `~/Library/Caches`, профили Chrome / Safari / Edge / Brave / Firefox / Яндекс. Куки и пароли не трогаем.
-- **Свои исключения** — добавь папку. Или с карточки: правый клик → «Не трогать эту папку». Без правки кода.
-- **Память** — кто жрёт RAM и какие вкладки открыты. Браузер не закрываем: «вот Chrome, вот вкладка, вот оценка».
-- **Проверка** — известный adware, неподписанные агенты, странный hosts. Это не сигнатурный антивирус.
-- **Автозагрузка** — логин-итемы и LaunchAgents этого пользователя.
-- **Своё расписание** — свои часы, тумблер «Автоочистка». По расписанию снимаются только кэши, не медиа и не корзина.
-- **Telegram сам находится** — любые аккаунты на этом Mac, не хардкод чужого компьютера.
-- **Защита из коробки** — Colima, Parallels, Gradle, iOS Simulator, DeviceSupport, Claude VM, Photos. Только если эти папки реально есть.
-- **Никакой телеметрии.** Всё локально, на твоём диске.
+- Кэши браузеров, логи, мессенджеры. Куки и пароли не трогаем.
+- Свои исключения – добавь папку, или с карточки правым кликом: «Не трогать эту папку».
+- Память – кто жрёт RAM и какие вкладки открыты. Браузер не закрываем.
+- Проверка – известный adware и странные агенты. Не антивирус.
+- Автозагрузка – что стартует вместе с тобой.
+- Расписание – свои часы. По таймеру снимаются только кэши, не медиа и не корзина.
+- Telegram находится сам, на этом Mac.
+- Colima, Parallels, Gradle, симулятор, DeviceSupport, Claude VM, Photos – не трогаем, если они есть.
+- Телеметрии нет. Всё локально.
 
 <p align="center">
   <img src="docs/brand/flask.png" width="280" alt="Glass flask">
@@ -81,19 +62,30 @@ Turn on **Full Disk Access** if you want Messages / Telegram in the scan. Browse
 
 ---
 
-## Requirements
+## Download
 
-| | |
-| --- | --- |
-| macOS | 14 Sonoma or newer |
-| Chip | Apple Silicon and Intel (universal) |
-| Disk | Full Disk Access is optional, recommended for Messages / Telegram |
+The button is a `.dmg`. Not a zip of the repo.
 
----
+1. Open `CleanAlephaMac98.dmg`
+2. Drag it into **Applications**
+3. First launch: **right-click → Open** (ad-hoc signed, Gatekeeper asks once)
+4. If macOS still blocks it: `xattr -cr /Applications/CleanAlephaMac98.app`
 
-## Privacy
+Turn on **Full Disk Access** if you want Messages and Telegram in the scan. Browser caches work without it.
 
-No accounts. No cloud. No analytics. The auto-clean LaunchAgent lives in your user domain and writes `~/Library/Logs/CleanAlephaMac98.log`. Browser login databases are on a denylist.
+## What it does
+
+- Browser caches, logs, messengers. Cookies and passwords stay.
+- Your exclusions – add a folder, or right-click a card: “Don't touch this folder”.
+- Memory – what's eating RAM, which tabs are open. We don't quit the browser.
+- Check – known adware and odd agents. Not an antivirus.
+- Startup – what launches when you log in.
+- Schedule – your hours. The timer only clears caches, not media, not Trash.
+- Telegram is found on this Mac, not hardcoded from someone else's.
+- Colima, Parallels, Gradle, Simulator, DeviceSupport, Claude VM, Photos – left alone if they're there.
+- No telemetry. It lives on your disk.
+
+macOS 14+, Apple Silicon and Intel.
 
 ---
 
@@ -106,17 +98,17 @@ zsh packaging/install.sh
 open ~/Applications/CleanAlephaMac98.app
 ```
 
-Make a DMG:
+DMG:
 
 ```bash
 zsh packaging/make-dmg.sh
 open dist/CleanAlephaMac98.dmg
 ```
 
-Needs Xcode Command Line Tools and macOS 14+.
+Needs Xcode Command Line Tools.
 
 ---
 
 ## License
 
-[MIT](LICENSE). Free to use, fork, and give to people who will not rebuild the app.
+[MIT](LICENSE). Use it, fork it, give it to whoever.

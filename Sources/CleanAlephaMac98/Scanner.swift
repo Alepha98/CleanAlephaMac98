@@ -236,7 +236,7 @@ enum Scanner {
         let url = home().appendingPathComponent(".Trash")
         let b = DiskSizer.bytes(at: url)
         guard b > 0 else { return [] }
-        return [JunkItem(id: "trash", module: .trash, title: Line(ru: "Корзина пользователя", en: "User Trash"), subtitle: Line(ru: "Файл ещё можно вернуть, пока не очистили", en: "Still recoverable until we empty it"), url: url, bytes: b, selected: false, kind: .emptyTrash, keepsLogins: false)]
+        return [JunkItem(id: "trash", module: .trash, title: Line(ru: "Корзина пользователя", en: "User Trash"), subtitle: Line(ru: "Пока не очистили – ещё можно вернуть", en: "Until we empty it, you can still put it back"), url: url, bytes: b, selected: false, kind: .emptyTrash, keepsLogins: false)]
     }
 
     private static func leftovers() -> Gathered {
@@ -332,10 +332,10 @@ enum Scanner {
 
     private static func browsers() -> [JunkItem] {
         var rows: [JunkItem] = []
-        if let x = item("chrome-cache", .browsers, Line(ru: "Chrome — диск-кэш", en: "Chrome disk cache"), Line(ru: "Куки и пароли на месте", en: "Cookies and passwords stay"), "Library/Caches/Google/Chrome", keeps: true) {
+        if let x = item("chrome-cache", .browsers, Line(ru: "Chrome – диск-кэш", en: "Chrome disk cache"), Line(ru: "Куки и пароли на месте", en: "Cookies and passwords stay"), "Library/Caches/Google/Chrome", keeps: true) {
             rows.append(x)
         }
-        if let x = item("safari-cache", .browsers, Line(ru: "Safari — локальный кэш", en: "Safari local cache"), Line(ru: "Не контейнер сессий", en: "Not the session container"), "Library/Caches/com.apple.Safari", keeps: true) {
+        if let x = item("safari-cache", .browsers, Line(ru: "Safari – локальный кэш", en: "Safari local cache"), Line(ru: "Сессии на месте", en: "Sessions stay"), "Library/Caches/com.apple.Safari", keeps: true) {
             rows.append(x)
         }
         let store = home().appendingPathComponent("Library/Containers/com.apple.Safari/Data/Library/WebKit/WebsiteDataStore")
@@ -353,7 +353,7 @@ enum Scanner {
             }
         }
         if safariBytes > 0 {
-            rows.append(JunkItem(id: "safari-net", module: .browsers, title: Line(ru: "Safari — сетевой кэш", en: "Safari network cache"), subtitle: Line(ru: "Входы не сбрасываем", en: "Logins stay"), url: store, bytes: safariBytes, selected: true, kind: .safariNetworkCache, keepsLogins: true))
+            rows.append(JunkItem(id: "safari-net", module: .browsers, title: Line(ru: "Safari – сетевой кэш", en: "Safari network cache"), subtitle: Line(ru: "Логины целы", en: "Logins stay"), url: store, bytes: safariBytes, selected: true, kind: .safariNetworkCache, keepsLogins: true))
         }
 
         rows.append(contentsOf: chromiumProfileCaches(
@@ -407,8 +407,8 @@ enum Scanner {
                 if let item = folderItem(
                     id: "b-Firefox-\(pname)-\(cacheName)",
                     module: .browsers,
-                    title: Line(ru: "Firefox — \(cacheName)", en: "Firefox — \(cacheName)"),
-                    subtitle: Line(ru: "\(pname) · логины целы", en: "\(pname) · logins intact"),
+                    title: Line(ru: "Firefox – \(cacheName)", en: "Firefox – \(cacheName)"),
+                    subtitle: Line(ru: "\(pname) · логины целы", en: "\(pname) · logins stay"),
                     url: url,
                     selected: true,
                     keeps: true
@@ -445,8 +445,8 @@ enum Scanner {
                 guard let item = folderItem(
                     id: "b-\(brand)-\(pname)-\(cacheName)",
                     module: .browsers,
-                    title: Line(ru: "\(brand) — \(cacheName)", en: "\(brand) — \(cacheName)"),
-                    subtitle: Line(ru: "\(pname) · логины целы", en: "\(pname) · logins intact"),
+                    title: Line(ru: "\(brand) – \(cacheName)", en: "\(brand) – \(cacheName)"),
+                    subtitle: Line(ru: "\(pname) · логины целы", en: "\(pname) · logins stay"),
                     url: url,
                     selected: true,
                     keeps: true
@@ -460,7 +460,7 @@ enum Scanner {
             if let item = folderItem(
                 id: "b-\(brand)-root-\(cacheName)",
                 module: .browsers,
-                title: Line(ru: "\(brand) — \(cacheName)", en: "\(brand) — \(cacheName)"),
+                title: Line(ru: "\(brand) – \(cacheName)", en: "\(brand) – \(cacheName)"),
                 subtitle: Copy.loginsBadge,
                 url: url,
                 selected: true,
@@ -494,7 +494,7 @@ enum Scanner {
             guard let item = folderItem(
                 id: "b-\(brand)-\(url.path.hashValue)",
                 module: .browsers,
-                title: Line(ru: "\(brand) — \(name)", en: "\(brand) — \(name)"),
+                title: Line(ru: "\(brand) – \(name)", en: "\(brand) – \(name)"),
                 subtitle: Line(ru: "Только кэш профиля", en: "Profile cache only"),
                 url: url,
                 selected: true,
@@ -539,7 +539,7 @@ enum Scanner {
                 rows.append(x)
             }
         }
-        if let x = item("msg", .messengers, Line(ru: "Вложения Сообщений", en: "Messages attachments"), Line(ru: "Потолок имеет смысл с полным доступом к диску", en: "The cap matters with Full Disk Access"), "Library/Messages/Attachments", selected: false) {
+        if let x = item("msg", .messengers, Line(ru: "Вложения Сообщений", en: "Messages attachments"), Line(ru: "Без полного доступа почти ничего не видно", en: "Needs Full Disk Access or you'll see almost nothing"), "Library/Messages/Attachments", selected: false) {
             rows.append(x)
         }
         if let x = item("tgdesk", .messengers, Line.proper("Telegram Desktop cache"), Line.proper("tdata/user_data"), "Library/Application Support/Telegram Desktop/tdata/user_data") {
