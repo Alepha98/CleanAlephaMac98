@@ -47,6 +47,10 @@ final class AppState {
     var scheduleSlots: [ScheduleSlot] = ScheduleStore.loadSlots()
     var scheduleNote: Line?
     var pulse: PulseSnapshot?
+    /// Drill-down into one app inside Performance (nil = overview).
+    var pulseFocus: String?
+    /// Modules where the user pressed «Scan again» and is back on the home orb.
+    var resultsDismissed: Set<Module> = []
 
     var copyLang: CopyLang { language.resolved() }
 
@@ -85,6 +89,11 @@ final class AppState {
     private var measuringProtected = false
     @ObservationIgnored
     private var workTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var workGeneration = 0
+    /// Module currently being scanned/cleaned – sidebar stays open for the rest.
+    @ObservationIgnored
+    private(set) var busyModule: Module?
 
     func requestProtectedMeasure(force: Bool = false) {
         if measuringProtected { return }
@@ -131,9 +140,57 @@ final class AppState {
 
     func hasScanned(_ m: Module) -> Bool {
         if m == .space || m == .tools { return false }
-        if scannedModules.contains(.smart) && !m.isLiveModule { return true }
-        if m == .smart { return !scannedModules.isEmpty && scannedModules.contains(where: { $0.isCleanupModule && !$0.isLiveModule }) }
+        if resultsDismissed.contains(m) { return false }
+        // Smart only after an actual smart scan – never borrow a single layer scan.
+        if m == .smart { return scannedModules.contains(.smart) }
+        // After smart scan, every cleanup layer (not live) has those results ready.
+        if scannedModules.contains(.smart) && m.isCleanupModule && !m.isLiveModule { return true }
         return scannedModules.contains(m)
+    }
+
+    /// CleanMyMac-style overview rows after Smart Scan.
+    func smartOverviewModules() -> [Module] {
+        [.junk, .mail, .trash, .leftovers, .large, .browsers, .dev, .messengers]
+    }
+
+    func selectModule(_ m: Module) {
+        if isBusy, busyModule != m {
+            cancelWork()
+        }
+        withAnimation(Motion.springUI) {
+            if m != .pulse { pulseFocus = nil }
+            module = m
+        }
+    }
+
+    func openPulseApp(_ name: String) {
+        guard module == .pulse, !isBusy else { return }
+        withAnimation(Motion.springUI) {
+            pulseFocus = name
+        }
+    }
+
+    func closePulseFocus() {
+        withAnimation(Motion.springUI) {
+            pulseFocus = nil
+        }
+    }
+
+    /// «Scan again» – back to the centered orb; user presses Scan themselves.
+    func prepareRescan() {
+        guard !isBusy else { return }
+        resultsDismissed.insert(module)
+        pulseFocus = nil
+        scanFinished = false
+        statusStopped = false
+        lastFailureNote = nil
+        didCleanThisScan = false
+        status = module == .smart ? Copy.idleHint : module.blurb
+        withAnimation(Motion.springOrb) {
+            orbFill = 0.42
+            progress = 0
+            displayedBytes = 0
+        }
     }
 
     func bytes(in module: Module) -> Int64 {
@@ -151,12 +208,31 @@ final class AppState {
 
     func visibleItems() -> [JunkItem] {
         let pool = cleaning ? items : items.filter { $0.bytes > 0 }
-        let scoped = module == .smart
-            ? pool.filter { !$0.module.isLiveModule }
-            : pool.filter { $0.module == module }
+        let scoped: [JunkItem]
+        if module == .smart {
+            scoped = pool.filter { !$0.module.isLiveModule }
+        } else if module == .pulse {
+            scoped = pulseVisible(from: pool)
+        } else {
+            scoped = pool.filter { $0.module == module }
+        }
         return scoped.sorted {
             if $0.bytes != $1.bytes { return $0.bytes > $1.bytes }
             return $0.title.ru.localizedStandardCompare($1.title.ru) == .orderedAscending
+        }
+    }
+
+    private func pulseVisible(from pool: [JunkItem]) -> [JunkItem] {
+        let pulse = pool.filter { $0.module == .pulse }
+        guard let focus = pulseFocus else {
+            return pulse.filter {
+                $0.id == "pulse-ram" || $0.id == "pulse-cpu" || $0.id.hasPrefix("pulse-app-")
+            }
+        }
+        return pulse.filter { item in
+            if item.id.hasPrefix("pulse-child:\(focus):") { return true }
+            if item.id.hasPrefix("pulse-tab:"), item.id.hasSuffix(":\(focus)") { return true }
+            return false
         }
     }
 
@@ -275,6 +351,16 @@ final class AppState {
         }
     }
 
+    func markClosed(_ id: String) {
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+        items[i].bytes = 0
+        items[i].selected = false
+        withAnimation(Motion.easeMicro) {
+            displayedBytes = selectedBytes
+            items.removeAll { $0.bytes <= 0 && $0.id.hasPrefix("pulse-tab:") }
+        }
+    }
+
     func selectSafeVisible() {
         guard !isBusy else { return }
         let ids = Set(visibleItems().filter { $0.bytes > 0 }.map(\.id))
@@ -303,6 +389,10 @@ final class AppState {
         if !module.isCleanupModule {
             module = .smart
         }
+        resultsDismissed.remove(module)
+        if module == .smart {
+            resultsDismissed.removeAll()
+        }
         workTask = Task { @MainActor in
             await scan()
         }
@@ -318,7 +408,47 @@ final class AppState {
 
     @MainActor
     func cancelWork() {
+        workGeneration += 1
         workTask?.cancel()
+        workTask = nil
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if scanning {
+            let scope = busyModule ?? module
+            scanning = false
+            busyModule = nil
+            let hasFinds = items.contains { $0.bytes > 0 && (scope == .smart ? !$0.module.isLiveModule : $0.module == scope) }
+            scanFinished = hasFinds
+            statusStopped = true
+            status = hasFinds ? Copy.scanStoppedPartial : Copy.scanStoppedEmpty
+            if hasFinds {
+                scannedModules.insert(scope)
+                if scope == .smart {
+                    for m in Module.allCases where m.isCleanupModule && !m.isLiveModule {
+                        scannedModules.insert(m)
+                    }
+                }
+            }
+            withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
+                orbFill = hasFinds ? 0.88 : 0.42
+                progress = hasFinds ? 1 : 0
+            }
+            CamLog.line("cancel scan \(scope.rawValue) finds=\(hasFinds)")
+        }
+        if cleaning {
+            cleaning = false
+            busyModule = nil
+            statusStopped = true
+            if lastFreed > 0 {
+                status = Copy.stoppedFreed(lastFreed)
+            } else {
+                status = Copy.cleanStoppedEmpty
+            }
+            CamLog.line("cancel clean")
+        }
+    }
+
+    private func isCurrentWork(_ gen: Int) -> Bool {
+        gen == workGeneration && !Task.isCancelled
     }
 
     @MainActor
@@ -332,6 +462,8 @@ final class AppState {
         let stages = Scanner.ScanStage.stages(for: scope)
         guard !stages.isEmpty else { return }
 
+        let gen = workGeneration
+        busyModule = scope
         scanning = true
         scanFinished = false
         cleaning = false
@@ -347,31 +479,29 @@ final class AppState {
             lastFreed = 0
             didCleanThisScan = false
             cleanedInModule = nil
+            resultsDismissed.removeAll()
         } else {
             items.removeAll { $0.module == scope }
             scannedModules.remove(scope)
+            // Layer scan must not make Smart look scanned.
+            scannedModules.remove(.smart)
         }
 
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         var completed = false
         defer {
-            if !completed {
+            if busyModule == scope { busyModule = nil }
+            if !completed, isCurrentWork(gen) {
                 scanning = false
-                if Task.isCancelled {
-                    lastFailureNote = nil
-                    let hasFinds = items.contains { $0.bytes > 0 }
-                    scanFinished = hasFinds
-                    statusStopped = true
-                    status = hasFinds ? Copy.scanStoppedPartial : Copy.scanStoppedEmpty
-                    withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
-                        orbFill = hasFinds ? 0.88 : 0.42
-                    }
-                } else {
-                    scanFinished = true
-                    if lastFailureNote == nil {
-                        lastFailureNote = Copy.scanBroke
-                    }
-                    status = lastFailureNote ?? status
+                lastFailureNote = nil
+                let hasFinds = items.contains {
+                    $0.bytes > 0 && (scope == .smart ? !$0.module.isLiveModule : $0.module == scope)
+                }
+                scanFinished = hasFinds
+                statusStopped = true
+                status = hasFinds ? Copy.scanStoppedPartial : Copy.scanStoppedEmpty
+                withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
+                    orbFill = hasFinds ? 0.88 : 0.42
                 }
             }
         }
@@ -380,58 +510,77 @@ final class AppState {
             orbFill = 0.14
         }
         try? await Task.sleep(nanoseconds: reduce ? 80_000_000 : 180_000_000)
-        if Task.isCancelled { return }
+        guard isCurrentWork(gen) else { return }
 
         var stageErrors = 0
         let n = max(stages.count, 1)
+        CamLog.line("scan start \(scope.rawValue) stages=\(n)")
         for (i, stage) in stages.enumerated() {
-            if Task.isCancelled { return }
-            status = Copy.scanning(stage.module.name)
-            let targetProgress = Double(i + 1) / Double(n)
-            let targetFill = 0.14 + 0.78 * targetProgress
-            withAnimation(Motion.level(reduce: reduce)) {
-                progress = targetProgress
-                orbFill = targetFill
+            guard isCurrentWork(gen) else { return }
+            if module == scope {
+                status = Copy.scanning(stage.module.name)
+                let targetProgress = Double(i + 1) / Double(n)
+                let targetFill = 0.14 + 0.78 * targetProgress
+                withAnimation(Motion.level(reduce: reduce)) {
+                    progress = targetProgress
+                    orbFill = targetFill
+                }
             }
             let chunk = await Background.run {
                 Scanner.safeItems(for: stage)
             }
-            if Task.isCancelled { return }
+            guard isCurrentWork(gen) else { return }
             if chunk.failed { stageErrors += 1 }
             items.append(contentsOf: chunk.items)
             scannedModules.insert(stage.module)
-            displayedBytes = selectedBytes
+            if module == scope {
+                displayedBytes = selectedBytes
+            }
         }
+
+        guard isCurrentWork(gen) else { return }
 
         if scope == .smart {
             scannedModules.insert(.smart)
             for m in Module.allCases where m.isCleanupModule && !m.isLiveModule { scannedModules.insert(m) }
+        } else {
+            scannedModules.insert(scope)
         }
 
-        progress = 1
-        let empty = visibleItems().isEmpty
+        let empty = items.filter {
+            $0.bytes > 0 && (scope == .smart ? !$0.module.isLiveModule : $0.module == scope)
+        }.isEmpty
         withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
             scanning = false
-            scanFinished = true
-            orbFill = empty ? 0.12 : 0.88
+            if module == scope {
+                scanFinished = true
+                orbFill = empty ? 0.12 : 0.88
+                progress = 1
+            }
         }
-        if stageErrors > 0 {
-            lastFailureNote = Copy.partialRead(stageErrors)
-        }
-        if empty {
-            status = hasFDA ? Copy.foldersClean : Copy.foldersCleanFDA
-        } else {
-            status = Copy.canClear(selected: selectedBytes, found: foundBytes)
-        }
-        if let note = lastFailureNote {
-            status = Line(ru: "\(status.ru) \(note.ru)", en: "\(status.en) \(note.en)")
+        if module == scope {
+            if stageErrors > 0 {
+                lastFailureNote = Copy.partialRead(stageErrors)
+            }
+            if empty {
+                status = hasFDA ? Copy.foldersClean : Copy.foldersCleanFDA
+            } else {
+                status = Copy.canClear(selected: selectedBytes, found: foundBytes)
+            }
+            if let note = lastFailureNote {
+                status = Line(ru: "\(status.ru) \(note.ru)", en: "\(status.en) \(note.en)")
+            }
+            displayedBytes = selectedBytes
         }
         completed = true
-        GlassTick.play()
+        CamLog.line("scan done \(scope.rawValue) items=\(items.filter { $0.module == scope || scope == .smart }.count) empty=\(empty) errors=\(stageErrors)")
+        if module == scope { GlassTick.play() }
     }
 
     @MainActor
     func scanLive(_ scope: Module) async {
+        let gen = workGeneration
+        busyModule = scope
         scanning = true
         scanFinished = false
         cleaning = false
@@ -446,25 +595,18 @@ final class AppState {
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         var completed = false
         defer {
-            if !completed {
+            if busyModule == scope { busyModule = nil }
+            if !completed, isCurrentWork(gen) {
                 scanning = false
-                if Task.isCancelled {
-                    lastFailureNote = nil
-                    let hasFinds = items.contains { $0.module == scope && $0.bytes > 0 }
-                    scanFinished = hasFinds
-                    statusStopped = true
-                    status = hasFinds ? Copy.scanStoppedPartial : Copy.scanStoppedEmpty
-                    withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
-                        orbFill = hasFinds ? 0.88 : 0.42
-                    }
-                    if hasFinds { scannedModules.insert(scope) }
-                } else {
-                    scanFinished = true
-                    if lastFailureNote == nil {
-                        lastFailureNote = Copy.scanBroke
-                    }
-                    status = lastFailureNote ?? status
+                lastFailureNote = nil
+                let hasFinds = items.contains { $0.module == scope && $0.bytes > 0 }
+                scanFinished = hasFinds
+                statusStopped = true
+                status = hasFinds ? Copy.scanStoppedPartial : Copy.scanStoppedEmpty
+                withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
+                    orbFill = hasFinds ? 0.88 : 0.42
                 }
+                if hasFinds { scannedModules.insert(scope) }
             }
         }
 
@@ -472,66 +614,93 @@ final class AppState {
             orbFill = 0.14
         }
         try? await Task.sleep(nanoseconds: reduce ? 80_000_000 : 180_000_000)
-        if Task.isCancelled { return }
+        guard isCurrentWork(gen) else { return }
 
-        status = Copy.scanning(scope.name)
-        withAnimation(Motion.level(reduce: reduce)) {
-            progress = 0.2
-            orbFill = 0.3
+        if module == scope {
+            status = Copy.scanning(scope.name)
+            withAnimation(Motion.level(reduce: reduce)) {
+                progress = 0.2
+                orbFill = 0.3
+            }
         }
 
+        CamLog.line("scanLive start \(scope.rawValue)")
         switch scope {
         case .pulse:
+            // RAM + CPU first (fast). Tabs are separate and never block the Stop / results UI.
+            pulseFocus = nil
             let mem = await Background.run { LiveProbe.pulseMemory() }
-            if Task.isCancelled { return }
+            guard isCurrentWork(gen) else { return }
             pulse = mem
             items.append(contentsOf: LiveProbe.junk(fromMemory: mem))
-            withAnimation(Motion.level(reduce: reduce)) {
-                progress = 0.55
-                orbFill = 0.58
-                displayedBytes = selectedBytes
+            scannedModules.insert(.pulse)
+            withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
+                scanning = false
+                busyModule = nil
+                if module == scope {
+                    scanFinished = true
+                    progress = 1
+                    orbFill = 0.88
+                    status = Copy.ramHonest
+                    displayedBytes = selectedBytes
+                }
             }
-            let withTabs = await Background.run { LiveProbe.pulseTabs(into: mem) }
-            if Task.isCancelled { return }
+            completed = true
+            CamLog.line("scanLive pulse ram items=\(items.filter { $0.module == .pulse }.count) used=\(mem.used)")
+            if module == scope { GlassTick.play() }
+
+            let running = LiveProbe.browsersWithWindows()
+            guard isCurrentWork(gen) else { return }
+            let withTabs = await Background.run { LiveProbe.pulseTabs(into: mem, only: running) }
+            guard isCurrentWork(gen) else { return }
             pulse = withTabs
             items.removeAll { $0.module == .pulse && $0.id.hasPrefix("pulse-tab:") }
             items.append(contentsOf: LiveProbe.junk(fromTabs: withTabs))
-            if let note = withTabs.tabAccess, note == Copy.needAutomation {
+            if module == scope, let note = withTabs.tabAccess, note == Copy.needAutomation {
                 lastFailureNote = note
+                status = Line(ru: "\(Copy.ramHonest.ru) \(note.ru)", en: "\(Copy.ramHonest.en) \(note.en)")
             }
+            CamLog.line("scanLive pulse tabs extras=\(withTabs.tabs.count)")
+            return
         case .protect:
             let rows = await Background.run { LiveProbe.junkProtect() }
-            if Task.isCancelled { return }
+            guard isCurrentWork(gen) else { return }
             items.append(contentsOf: rows)
         case .startup:
             let rows = await Background.run { LiveProbe.junkStartup() }
-            if Task.isCancelled { return }
+            guard isCurrentWork(gen) else { return }
             items.append(contentsOf: rows)
         default:
             break
         }
 
+        guard isCurrentWork(gen) else { return }
         scannedModules.insert(scope)
-        progress = 1
-        let empty = visibleItems().isEmpty
+        let empty = items.filter { $0.module == scope && $0.bytes > 0 }.isEmpty
         withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
             scanning = false
-            scanFinished = true
-            orbFill = empty ? 0.12 : 0.88
+            if module == scope {
+                scanFinished = true
+                orbFill = empty ? 0.12 : 0.88
+                progress = 1
+            }
         }
-        if empty {
-            status = scope == .protect ? Copy.protectClear : Copy.layerClean
-        } else if scope == .pulse {
-            status = Copy.ramHonest
-        } else {
-            status = Copy.canClear(selected: selectedBytes, found: foundBytes)
+        if module == scope {
+            if empty {
+                status = scope == .protect ? Copy.protectClear : Copy.layerClean
+            } else if scope == .pulse {
+                status = Copy.ramHonest
+            } else {
+                status = Copy.canClear(selected: selectedBytes, found: foundBytes)
+            }
+            if let note = lastFailureNote {
+                status = Line(ru: "\(status.ru) \(note.ru)", en: "\(status.en) \(note.en)")
+            }
+            displayedBytes = selectedBytes
+            GlassTick.play()
         }
-        if let note = lastFailureNote {
-            status = Line(ru: "\(status.ru) \(note.ru)", en: "\(status.en) \(note.en)")
-        }
-        displayedBytes = selectedBytes
+        CamLog.line("scanLive done \(scope.rawValue) items=\(items.filter { $0.module == scope }.count) empty=\(empty)")
         completed = true
-        GlassTick.play()
     }
 
     @MainActor
@@ -540,6 +709,9 @@ final class AppState {
         let jobs = visibleItems().filter { $0.selected && $0.bytes > 0 }
         guard !jobs.isEmpty else { return }
 
+        let gen = workGeneration
+        let scope = module
+        busyModule = scope
         let startSelected = jobs.reduce(Int64(0)) { $0 + $1.bytes }
         var freed: Int64 = 0
         var remaining = startSelected
@@ -548,19 +720,25 @@ final class AppState {
         withAnimation(Motion.easeMicro) {
             cleaning = true
             lastFailureNote = nil
+            statusStopped = false
             status = Copy.cleaningStatus
             progress = 0
             displayedBytes = startSelected
         }
 
         defer {
-            cleaning = false
+            if busyModule == scope { busyModule = nil }
+            if isCurrentWork(gen) {
+                cleaning = false
+            }
         }
 
         for (offset, item) in jobs.enumerated() {
-            if Task.isCancelled { break }
+            guard isCurrentWork(gen) else { break }
             let outcome = await Background.run { Janitor.clean(item) }
+            guard isCurrentWork(gen) else { break }
             freed += outcome.freed
+            lastFreed = freed
             if outcome.failed {
                 failed += 1
                 if let i = items.firstIndex(where: { $0.id == item.id }) {
@@ -585,34 +763,26 @@ final class AppState {
             }
         }
 
-        lastFreed = freed
-        let allGone = items.filter { $0.bytes > 0 && (module == .smart || $0.module == module) }.isEmpty
-        withAnimation(Motion.level(reduce: reduce)) {
-            orbFill = allGone ? (freed > 0 ? 0.20 : 0.12) : max(0.20, orbFill)
-            if remaining == 0 { displayedBytes = 0 }
-        }
-        // TZ-02 §3.6: hold the low waterline before the done state.
-        if freed > 0 {
-            try? await Task.sleep(nanoseconds: reduce ? 180_000_000 : 420_000_000)
-        }
-
-        if Task.isCancelled {
-            lastFailureNote = nil
-            if freed > 0 {
-                didCleanThisScan = true
-                cleanedInModule = module
-                status = Copy.stoppedFreed(freed)
-            } else {
-                status = Copy.cleanStoppedEmpty
-            }
+        guard isCurrentWork(gen) else {
             withAnimation(Motion.easeMicro) {
                 items.removeAll { $0.bytes <= 0 }
             }
             return
         }
 
+        lastFreed = freed
+        let allGone = items.filter { $0.bytes > 0 && (scope == .smart || $0.module == scope) }.isEmpty
+        withAnimation(Motion.level(reduce: reduce)) {
+            orbFill = allGone ? (freed > 0 ? 0.20 : 0.12) : max(0.20, orbFill)
+            if remaining == 0 { displayedBytes = 0 }
+        }
+        if freed > 0 {
+            try? await Task.sleep(nanoseconds: reduce ? 180_000_000 : 420_000_000)
+        }
+        guard isCurrentWork(gen) else { return }
+
         didCleanThisScan = true
-        cleanedInModule = module
+        cleanedInModule = scope
 
         if failed == 0 {
             status = freed > 0 ? Copy.doneFreed(freed) : Copy.alreadyGone

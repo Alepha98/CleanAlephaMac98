@@ -18,7 +18,11 @@ struct CleanOutcome: Sendable {
 }
 
 enum Janitor {
+    /// Skip Keep path checks for tab closes – URL is a website, not a folder we wipe.
     static func clean(_ item: JunkItem) -> CleanOutcome {
+        if item.kind == .closeTab {
+            return closeTab(item)
+        }
         if Keep.isProtected(item.url) {
             return .refused(leftover: max(item.bytes, DiskSizer.bytes(at: item.url)))
         }
@@ -36,11 +40,21 @@ enum Janitor {
             return wipeChildren(item.url)
         case .advice:
             return .alreadyGone(counted: 0)
+        case .closeTab:
+            return closeTab(item)
         case .removeAgent:
             return removeAgent(item)
         case .removeLoginItem:
             return removeLoginItem(item)
         }
+    }
+
+    private static func closeTab(_ item: JunkItem) -> CleanOutcome {
+        let ok = LiveProbe.closeTab(item: item)
+        if ok {
+            return CleanOutcome(freed: item.bytes, failed: false, leftover: 0)
+        }
+        return .refused(leftover: item.bytes)
     }
 
     private static func deleteItem(_ item: JunkItem) -> CleanOutcome {

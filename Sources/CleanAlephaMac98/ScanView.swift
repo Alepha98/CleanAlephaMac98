@@ -14,7 +14,22 @@ struct ScanView: View {
 
     private var showingResults: Bool { state.scanFinished && !state.scanning && state.hasScannedCurrent() }
     private var visible: [JunkItem] { state.visibleItems() }
-    private var isEmptyResults: Bool { showingResults && visible.isEmpty && !state.cleaning }
+    private var isEmptyResults: Bool {
+        // Drill-down keeps the results chrome (back button) even if no tabs/helpers yet.
+        if state.module == .pulse, state.pulseFocus != nil { return false }
+        return showingResults && visible.isEmpty && !state.cleaning
+    }
+    private var showingSmartOverview: Bool {
+        state.module == .smart && showingResults && !state.cleaning
+    }
+    private var smartTiles: [(module: Module, bytes: Int64)] {
+        state.smartOverviewModules().map { m in
+            (m, state.bytes(in: m))
+        }
+    }
+    private var smartOverviewEmpty: Bool {
+        showingSmartOverview && smartTiles.allSatisfy { $0.bytes == 0 }
+    }
 
     private var justCleanedEmpty: Bool {
         isEmptyResults && state.didCleanThisScan && state.lastFreed > 0 && state.cleanedInModule == state.module
@@ -75,7 +90,12 @@ struct ScanView: View {
     }
 
     private var liveFootnote: String {
-        if state.module == .pulse { return Copy.ramHonest.t(lang) }
+        if state.module == .pulse {
+            if let focus = state.pulseFocus {
+                return "\(Copy.pulseInside.t(lang)) – \(focus)"
+            }
+            return Copy.ramHonest.t(lang)
+        }
         if state.module.isLiveModule { return state.module.blurb.t(lang) }
         return Copy.loginsStay.t(lang)
     }
@@ -88,7 +108,13 @@ struct ScanView: View {
             let hPad = geo.size.width < 920 ? S.md : S.xl
             Group {
                 if showingResults {
-                    if isEmptyResults {
+                    if showingSmartOverview {
+                        if smartOverviewEmpty {
+                            emptyResults(orb: min(big * 0.72, 220), compact: compact, hPad: hPad)
+                        } else {
+                            smartOverview(orb: small, hPad: hPad, contentWidth: geo.size.width)
+                        }
+                    } else if isEmptyResults {
                         emptyResults(orb: min(big * 0.72, 220), compact: compact, hPad: hPad)
                     } else {
                         results(orb: small, hPad: hPad, contentWidth: geo.size.width)
@@ -99,6 +125,7 @@ struct ScanView: View {
             }
             .animation(layoutAnimation, value: showingResults)
             .animation(layoutAnimation, value: isEmptyResults)
+            .animation(layoutAnimation, value: showingSmartOverview)
             .frame(width: geo.size.width, height: geo.size.height)
         }
         .onAppear { syncReveal(showingResults) }
@@ -240,6 +267,89 @@ struct ScanView: View {
         return Array(repeating: GridItem(.flexible(), spacing: 14), count: count)
     }
 
+    private func smartOverview(orb: CGFloat, hPad: CGFloat, contentWidth: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 18) {
+                HeroOrb(fill: state.orbFill, scanning: false, cleaning: state.cleaning, size: orb)
+                    .frame(width: orb, height: orb)
+                    .aspectRatio(1, contentMode: .fit)
+                    .layoutPriority(1)
+                    .matchedGeometryEffect(id: "crystal-orb", in: orbSpace)
+                    .offset(y: -flyLift)
+                    .accessibilityElement()
+                    .accessibilityLabel(orbLabel)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(Copy.canClean.t(lang))
+                        .font(F.callout())
+                        .foregroundStyle(C.secondary)
+                    ZStack(alignment: .leading) {
+                        Text(ByteFormat.widthReserve)
+                            .font(F.heroSize())
+                            .hidden()
+                            .accessibilityHidden(true)
+                        Text(ByteFormat.string(shownBytes, lang))
+                            .font(F.heroSize())
+                            .foregroundStyle(C.ink)
+                            .contentTransition(.numericText())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    if state.foundBytes > state.selectedBytes {
+                        Text(Copy.foundLine(state.foundBytes).t(lang))
+                            .font(F.callout())
+                            .foregroundStyle(C.secondary)
+                    }
+                    Text(Copy.smartOverview.t(lang))
+                        .font(F.callout())
+                        .foregroundStyle(C.accentText)
+                    if let selectionLine {
+                        Text(selectionLine)
+                            .font(F.callout())
+                            .foregroundStyle(C.secondary)
+                    }
+                    if let note = state.lastFailureNote {
+                        let offerFDA = Copy.offersFDA(note)
+                        BannerWarn(
+                            text: note.t(lang),
+                            actionTitle: offerFDA ? Copy.settings.t(lang) : nil,
+                            action: offerFDA ? { state.openFDA() } : nil
+                        )
+                    } else if state.statusStopped {
+                        BannerInfo(text: state.status.t(lang))
+                    }
+                    resultsActions(narrow: contentWidth < 760)
+                        .padding(.top, 6)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+            .background(CardBackground())
+            .padding(.horizontal, hPad)
+            .padding(.top, 18)
+            .padding(.bottom, 14)
+            .opacity(headerReady ? 1 : 0)
+
+            ScrollView {
+                LazyVGrid(columns: resultColumns(contentWidth: contentWidth), spacing: 14) {
+                    ForEach(Array(smartTiles.enumerated()), id: \.element.module.id) { index, tile in
+                        let stagger = Motion.stagger(index: index, reduce: reduceMotion)
+                        SmartSectionTile(module: tile.module, bytes: tile.bytes) {
+                            state.selectModule(tile.module)
+                        }
+                        .opacity(cardsReady ? 1 : 0)
+                        .animation(
+                            .spring(response: 0.5, dampingFraction: 0.86).delay(stagger),
+                            value: cardsReady
+                        )
+                    }
+                }
+                .padding(.horizontal, hPad)
+                .padding(.bottom, S.xl)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     @ViewBuilder
     private func resultsActions(narrow: Bool) -> some View {
         if narrow {
@@ -285,7 +395,7 @@ struct ScanView: View {
     }
 
     private func rescanAction() -> some View {
-        Button(Copy.scanAgain.t(lang)) { state.requestScan() }
+        Button(Copy.scanAgain.t(lang)) { state.prepareRescan() }
             .buttonStyle(QuietButton(enabled: !state.isBusy))
             .disabled(state.isBusy)
             .help(Copy.scanHelp.t(lang))
@@ -325,10 +435,26 @@ struct ScanView: View {
                     .accessibilityElement()
                     .accessibilityLabel(orbLabel)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(state.cleaning ? Copy.cleaning.t(lang) : (state.module == .smart ? Copy.canClean.t(lang) : state.module.name.t(lang)))
-                        .font(F.callout())
-                        .foregroundStyle(C.secondary)
-                        .contentTransition(.opacity)
+                    if state.module == .pulse, let focus = state.pulseFocus {
+                        Button(action: state.closePulseFocus) {
+                            HStack(spacing: 4) {
+                                Text("‹")
+                                Text(Copy.pulseBack.t(lang))
+                            }
+                            .font(F.callout())
+                            .foregroundStyle(C.accentText)
+                        }
+                        .buttonStyle(.plain)
+                        Text(focus)
+                            .font(F.callout())
+                            .foregroundStyle(C.secondary)
+                            .contentTransition(.opacity)
+                    } else {
+                        Text(state.cleaning ? Copy.cleaning.t(lang) : (state.module == .smart ? Copy.canClean.t(lang) : state.module.name.t(lang)))
+                            .font(F.callout())
+                            .foregroundStyle(C.secondary)
+                            .contentTransition(.opacity)
+                    }
                     ZStack(alignment: .leading) {
                         Text(ByteFormat.widthReserve)
                             .font(F.heroSize())
@@ -342,7 +468,7 @@ struct ScanView: View {
                             .minimumScaleFactor(0.7)
                     }
                     .accessibilityLabel(Copy.orbCanClean(shownBytes).t(lang))
-                    if !state.cleaning, state.foundBytes > state.selectedBytes {
+                    if !state.cleaning, !state.module.isLiveModule, state.foundBytes > state.selectedBytes {
                         Text(Copy.foundLine(state.foundBytes).t(lang))
                             .font(F.callout())
                             .foregroundStyle(C.secondary)
@@ -389,6 +515,14 @@ struct ScanView: View {
             .animation(Motion.easeMicro, value: state.cleaning)
 
             ScrollView {
+                if state.module == .pulse, state.pulseFocus != nil, visible.isEmpty {
+                    Text(Copy.pulseIdle.t(lang))
+                        .font(F.body())
+                        .foregroundStyle(C.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, hPad)
+                        .padding(.bottom, S.md)
+                }
                 LazyVGrid(columns: resultColumns(contentWidth: contentWidth), spacing: 14) {
                     ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
                         let stagger = Motion.stagger(index: index, reduce: reduceMotion)
@@ -407,6 +541,7 @@ struct ScanView: View {
                 }
                 .padding(.horizontal, hPad)
                 .padding(.bottom, S.xl)
+                .animation(layoutAnimation, value: state.pulseFocus)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -448,7 +583,7 @@ struct ScanView: View {
                 .padding(.top, S.xs)
             }
             HStack(spacing: 10) {
-                Button(Copy.scanAgain.t(lang)) { state.requestScan() }
+                Button(Copy.scanAgain.t(lang)) { state.prepareRescan() }
                     .buttonStyle(PrimaryButton(enabled: !state.isBusy))
                     .disabled(state.isBusy)
                     .keyboardShortcut(.defaultAction)
@@ -483,6 +618,65 @@ struct ScanView: View {
     }
 }
 
+struct SmartSectionTile: View {
+    let module: Module
+    let bytes: Int64
+    var action: () -> Void
+    @Environment(\.copyLang) private var lang
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(hover ? C.action.opacity(0.18) : C.iconWell)
+                        CamIcon(glyph: Glyph(module: module), size: 16)
+                            .foregroundStyle(hover ? C.accentText : C.secondary)
+                    }
+                    .frame(width: 28, height: 28)
+                    Spacer()
+                    Text(bytes > 0 ? ByteFormat.string(bytes, lang) : Copy.layerClean.t(lang))
+                        .font(F.size())
+                        .foregroundStyle(C.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                Text(module.name.t(lang))
+                    .font(F.title())
+                    .foregroundStyle(C.ink)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Text(module.blurb.t(lang))
+                    .font(F.callout())
+                    .foregroundStyle(C.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                HStack(spacing: 6) {
+                    Text(Copy.openLayer.t(lang))
+                        .font(F.callout())
+                        .foregroundStyle(C.accentText)
+                    Spacer()
+                    Text("›")
+                        .font(F.title())
+                        .foregroundStyle(C.secondary.opacity(0.7))
+                }
+            }
+            .padding(S.md)
+            .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
+            .background(CardBackground(selected: false, hover: hover))
+            .focusStroke(radius: S.cardRadius)
+        }
+        .buttonStyle(CardPressStyle())
+        .onHover { hover = $0 }
+        .scaleEffect(hover ? Motion.hoverLift : 1)
+        .animation(Motion.easeHover, value: hover)
+        .accessibilityLabel("\(module.name.t(lang)), \(bytes > 0 ? ByteFormat.string(bytes, lang) : Copy.layerClean.t(lang))")
+        .accessibilityHint(Copy.openLayer.t(lang))
+    }
+}
+
 struct ResultCard: View {
     let item: JunkItem
     var enabled: Bool = true
@@ -494,9 +688,10 @@ struct ResultCard: View {
     private var emptied: Bool { item.bytes <= 0 }
     private var muted: Bool { !emptied && item.isSecondaryRisk && !item.selected }
     private var canToggle: Bool { enabled && !emptied && item.kind != .advice }
+    private var canDrill: Bool { enabled && !emptied && item.id.hasPrefix("pulse-app-") }
 
     var body: some View {
-        Button(action: toggle) {
+        Button(action: cardAction) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     ZStack {
@@ -519,14 +714,16 @@ struct ResultCard: View {
                 Text(item.subtitle.t(lang))
                     .font(F.callout())
                     .foregroundStyle(C.secondary.opacity(muted || emptied ? 0.75 : 1))
-                    .lineLimit(emptied ? 1 : 2)
+                    .lineLimit(emptied ? 1 : 3)
                     .multilineTextAlignment(.leading)
                 HStack(spacing: 6) {
                     if emptied {
                         MicroBadge(text: Copy.emptied.t(lang), tone: .quiet)
                     } else {
-                        CamIcon(glyph: item.selected ? .selectOn : .selectOff, size: 16)
-                            .foregroundStyle(item.selected ? C.action : C.secondary.opacity(0.35))
+                        if canToggle {
+                            CamIcon(glyph: item.selected ? .selectOn : .selectOff, size: 16)
+                                .foregroundStyle(item.selected ? C.action : C.secondary.opacity(0.35))
+                        }
                         if item.keepsLogins {
                             MicroBadge(text: Copy.loginsBadge.t(lang), tone: .safe)
                         }
@@ -543,15 +740,30 @@ struct ResultCard: View {
             .padding(S.md)
             .frame(maxWidth: .infinity, minHeight: emptied ? 96 : (item.module == .large ? 108 : 132), alignment: .topLeading)
             .opacity(emptied ? 0.62 : (muted ? 0.88 : 1))
-            .background(CardBackground(selected: item.selected && !emptied, hover: hover && canToggle))
+            .background(CardBackground(selected: item.selected && !emptied, hover: hover && (canToggle || canDrill)))
             .focusStroke(radius: S.cardRadius)
         }
         .buttonStyle(CardPressStyle())
-        .disabled(!canToggle)
+        .disabled(!canToggle && !canDrill)
         .contextMenu {
             if item.id.hasPrefix("pulse-tab:") {
                 Button(Copy.showTab.t(lang)) {
                     Task { await Background.run { LiveProbe.revealTab(item: item) } }
+                }
+                Button(Copy.closeTabNow.t(lang)) {
+                    Task { @MainActor in
+                        let ok = await Background.run { LiveProbe.closeTab(item: item) }
+                        if ok { state.markClosed(item.id) }
+                    }
+                }
+            }
+            if item.id.hasPrefix("pulse-app-") {
+                Button(Copy.pulseInside.t(lang)) {
+                    let name = String(item.id.dropFirst("pulse-app-".count))
+                    state.openPulseApp(name)
+                }
+                Button(Copy.openApp.t(lang)) {
+                    Task { @MainActor in LiveProbe.activateApp(item: item) }
                 }
             }
             if FinderReveal.canShow(item.url), !item.module.isLiveModule {
@@ -567,12 +779,21 @@ struct ResultCard: View {
         }
         .accessibilityLabel("\(item.title.t(lang)), \(emptied ? Copy.emptied.t(lang) : ByteFormat.string(item.bytes, lang))")
         .accessibilityValue(emptied ? Copy.emptied.t(lang) : (item.selected ? Copy.selectedOn.t(lang) : Copy.selectedOff.t(lang)))
-        .accessibilityAddTraits(emptied ? [] : .isToggle)
-        .accessibilityHint(emptied ? "" : (item.keepsLogins ? Copy.loginsBadge.t(lang) : (muted ? Copy.defaultOff.t(lang) : "")))
-        .onHover { hover = canToggle && $0 }
-        .scaleEffect(hover && canToggle ? Motion.hoverLift : 1)
+        .accessibilityAddTraits(emptied || !canToggle ? [] : .isToggle)
+        .accessibilityHint(emptied ? "" : (canDrill ? Copy.pulseInside.t(lang) : (item.keepsLogins ? Copy.loginsBadge.t(lang) : (muted ? Copy.defaultOff.t(lang) : ""))))
+        .onHover { hover = (canToggle || canDrill) && $0 }
+        .scaleEffect(hover && (canToggle || canDrill) ? Motion.hoverLift : 1)
         .animation(Motion.easeHover, value: hover)
         .animation(Motion.easeMicro, value: emptied)
+    }
+
+    private func cardAction() {
+        if canDrill {
+            let name = String(item.id.dropFirst("pulse-app-".count))
+            state.openPulseApp(name)
+        } else if canToggle {
+            toggle()
+        }
     }
 }
 

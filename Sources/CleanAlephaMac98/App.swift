@@ -32,6 +32,21 @@ struct CleanAlephaMac98App: App {
         if CommandLine.arguments.contains("--auto") {
             AutoClean.runAndExit()
         }
+        if CommandLine.arguments.contains("--qa-pulse") {
+            QAHarness.pulse()
+        }
+        if CommandLine.arguments.contains("--qa-protect") {
+            QAHarness.protect()
+        }
+        if CommandLine.arguments.contains("--qa-startup") {
+            QAHarness.startup()
+        }
+        if CommandLine.arguments.contains("--qa-keep") {
+            QAHarness.keep()
+        }
+        if CommandLine.arguments.contains("--qa-smart") {
+            QAHarness.smart()
+        }
     }
 
     var body: some Scene {
@@ -51,6 +66,16 @@ struct CleanAlephaMac98App: App {
                     delegate.state = state
                     state.applyAppearance()
                     state.refreshFDA()
+                    if let i = CommandLine.arguments.firstIndex(of: "--module"),
+                       i + 1 < CommandLine.arguments.count,
+                       let m = Module(rawValue: CommandLine.arguments[i + 1]) {
+                        state.module = m
+                    }
+                    if CommandLine.arguments.contains("--auto-scan") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
+                            state.requestScan()
+                        }
+                    }
                 }
         }
         .windowStyle(.hiddenTitleBar)

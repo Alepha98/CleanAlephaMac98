@@ -253,6 +253,13 @@ enum Scanner {
             let name = url.lastPathComponent
             if leftoverHasOwner(name, apps: apps) { continue }
             if name.lowercased().hasPrefix("com.apple") { continue }
+            // Apple / iCloud support folders that are not an "uninstalled app".
+            let systemSupport = Set([
+                "CloudDocs", "FileProvider", "Knowledge", "iCloud",
+                "CallHistoryTransactions", "CallHistoryDB", "CrashReporter",
+                "SyncServices", "AddressBook", "DiskImages", "ControlCenter"
+            ])
+            if systemSupport.contains(name) { continue }
             if Keep.isProtected(url) { continue }
             let b = DiskSizer.bytes(at: url)
             guard b > 8_388_608 else { continue }

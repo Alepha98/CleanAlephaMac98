@@ -11,31 +11,9 @@ enum DiskSizer {
     }
 
     static func duSK(_ url: URL, timeout: TimeInterval = 12) -> Int64? {
-        let p = Process()
-        let out = Pipe()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/du")
-        p.arguments = ["-sk", url.path]
-        p.standardOutput = out
-        p.standardError = Pipe()
-        do {
-            try p.run()
-        } catch {
-            return nil
-        }
-        let deadline = Date().addingTimeInterval(timeout)
-        while p.isRunning {
-            if Date() > deadline {
-                p.terminate()
-                Thread.sleep(forTimeInterval: 0.15)
-                if p.isRunning { p.interrupt() }
-                return nil
-            }
-            Thread.sleep(forTimeInterval: 0.04)
-        }
-        guard p.terminationStatus == 0 else { return nil }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        guard let text = String(data: data, encoding: .utf8) else { return nil }
-        let kb = Int64(text.split(whereSeparator: { $0.isWhitespace }).first.flatMap { Int64($0) } ?? 0)
+        let ran = CamProcess.run(path: "/usr/bin/du", arguments: ["-sk", url.path], timeout: timeout)
+        guard !ran.timedOut, ran.status == 0 else { return nil }
+        let kb = Int64(ran.out.split(whereSeparator: { $0.isWhitespace }).first.flatMap { Int64($0) } ?? 0)
         return kb * 1024
     }
 

@@ -76,6 +76,8 @@ enum CleanKind: Sendable, Equatable {
     case advice
     case removeAgent
     case removeLoginItem
+    /// Close one browser tab via AppleScript – never quits the browser.
+    case closeTab
 }
 
 struct JunkItem: Identifiable, Equatable, Sendable {
@@ -91,7 +93,7 @@ struct JunkItem: Identifiable, Equatable, Sendable {
 
     /// Large files / Telegram history / rebuild caches – quieter when unchecked.
     var isSecondaryRisk: Bool {
-        if module == .pulse { return true }
+        if module == .pulse { return kind == .closeTab || kind == .advice }
         if module == .startup { return kind != .advice }
         if module == .protect { return kind == .advice || id.hasPrefix("unsigned-") }
         if module == .large { return true }
@@ -108,7 +110,7 @@ struct JunkItem: Identifiable, Equatable, Sendable {
 
     /// Preset for «Безопасное»: caches on, trash / leftovers / history / huge off.
     var isSafePreset: Bool {
-        if module == .pulse { return false }
+        if module == .pulse { return kind == .closeTab }
         if module == .startup { return false }
         if module == .protect { return !isSecondaryRisk }
         if isSecondaryRisk { return false }
@@ -119,7 +121,10 @@ struct JunkItem: Identifiable, Equatable, Sendable {
     }
 
     var cautionBadge: Line? {
-        if module == .pulse, id.hasPrefix("pulse-tab:") { return Copy.estimateBadge }
+        if module == .pulse, id == "pulse-ram" || id == "pulse-cpu" { return nil }
+        if module == .pulse, kind == .closeTab { return Copy.tabCloseBadge }
+        if module == .pulse, id.hasPrefix("pulse-app-") { return Copy.drillBadge }
+        if module == .pulse, id.hasPrefix("pulse-child:") { return Copy.recommendBadge }
         if module == .pulse { return Copy.recommendBadge }
         if id.contains("tg-d-") { return Copy.historyBadge }
         if module == .leftovers { return Copy.leftoverBadge }

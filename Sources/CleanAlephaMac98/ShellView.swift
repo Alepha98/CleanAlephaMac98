@@ -55,7 +55,11 @@ struct ShellView: View {
             state.refreshFDA()
         }
         .onReceive(NotificationCenter.default.publisher(for: .cam98Scan)) { _ in
-            state.requestScan()
+            if state.hasScannedCurrent() && state.scanFinished && !state.isBusy {
+                state.prepareRescan()
+            } else {
+                state.requestScan()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .cam98Clean)) { _ in
             state.requestClean()
@@ -201,11 +205,9 @@ struct SidebarView: View {
                                 SidebarRow(
                                     module: m,
                                     selected: state.module == m,
-                                    enabled: !state.isBusy
+                                    enabled: true
                                 ) {
-                                    withAnimation(Motion.springUI) {
-                                        state.module = m
-                                    }
+                                    state.selectModule(m)
                                 }
                             }
                         }

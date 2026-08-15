@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import Darwin
 import Foundation
 
@@ -12,13 +13,31 @@ enum PulsePressure: String, Sendable {
         case .critical: Copy.pressureCritical
         }
     }
+
+    var cpuTitle: Line {
+        switch self {
+        case .normal: Copy.cpuNormal
+        case .warn: Copy.cpuWarn
+        case .critical: Copy.cpuCritical
+        }
+    }
+}
+
+struct LiveProc: Identifiable, Sendable, Equatable {
+    var id: String { "\(pid)" }
+    var label: String
+    var bytes: Int64
+    var cpu: Double
+    var pid: Int32
 }
 
 struct LiveApp: Identifiable, Sendable, Equatable {
     var id: String { name }
     var name: String
     var bytes: Int64
+    var cpu: Double
     var pids: [Int32]
+    var children: [LiveProc]
 }
 
 struct LiveTab: Identifiable, Sendable, Equatable {
@@ -38,6 +57,9 @@ struct PulseSnapshot: Sendable {
     var compressed: Int64
     var swap: Int64
     var pressure: PulsePressure
+    var cpuBusy: Double
+    var loadAvg: Double
+    var cpuPressure: PulsePressure
     var apps: [LiveApp]
     var tabs: [LiveTab]
     var tabAccess: Line?
@@ -72,8 +94,13 @@ struct StartupRow: Identifiable, Sendable, Equatable {
 
 enum LiveProbe {
     static func pulseMemory() -> PulseSnapshot {
+        CamLog.line("pulse memory begin")
         let mem = memory()
+        CamLog.line("pulse memory stats used=\(mem.used) total=\(mem.total) swap=\(mem.swap)")
+        let cpu = cpuLoad()
+        CamLog.line("pulse cpu busy=\(Int(cpu.busy)) load=\(String(format: "%.2f", cpu.load))")
         let apps = topApps()
+        CamLog.line("pulse memory apps=\(apps.count)")
         return PulseSnapshot(
             total: mem.total,
             used: mem.used,
@@ -81,6 +108,9 @@ enum LiveProbe {
             compressed: mem.compressed,
             swap: mem.swap,
             pressure: mem.pressure,
+            cpuBusy: cpu.busy,
+            loadAvg: cpu.load,
+            cpuPressure: cpu.pressure,
             apps: apps,
             tabs: [],
             tabAccess: nil
@@ -88,29 +118,110 @@ enum LiveProbe {
     }
 
     static func pulseTabs(into snap: PulseSnapshot) -> PulseSnapshot {
-        let (tabs, note) = browserTabs(apps: snap.apps)
+        pulseTabs(into: snap, only: nil)
+    }
+
+    /// `only` – browser display names already checked on the main actor (window on screen).
+    static func pulseTabs(into snap: PulseSnapshot, only allowed: Set<String>?) -> PulseSnapshot {
+        let (tabs, note) = browserTabs(apps: snap.apps, only: allowed)
         var next = snap
         next.tabs = tabs
         next.tabAccess = note
         return next
     }
 
+    /// Call on the main actor – NSWorkspace / window list are not safe off-main.
+    @MainActor
+    static func browsersWithWindows() -> Set<String> {
+        let browsers: [(app: String, bundles: [String])] = [
+            ("Safari", ["com.apple.Safari"]),
+            ("Google Chrome", ["com.google.Chrome"]),
+            ("Microsoft Edge", ["com.microsoft.edgemac"]),
+            ("Brave Browser", ["com.brave.Browser"]),
+            ("Chromium", ["org.chromium.Chromium"]),
+            ("Yandex", ["ru.yandex.desktop.yandex-browser", "ru.yandex.YandexBrowser"]),
+            ("Arc", ["company.thebrowser.Browser"])
+        ]
+        var out = Set<String>()
+        for spec in browsers {
+            if browserRunning(name: spec.app, bundles: spec.bundles) {
+                out.insert(spec.app)
+            }
+        }
+        CamLog.line("pulse windows \(out.sorted().joined(separator: ","))")
+        return out
+    }
+
     static func junk(fromMemory snap: PulseSnapshot) -> [JunkItem] {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        return snap.apps.prefix(12).map { app in
+        var ramSub = Copy.ramLine(used: snap.used, total: snap.total)
+        if snap.swap > 0 {
+            let swap = Copy.swapLine(snap.swap)
+            ramSub = Line(ru: "\(ramSub.ru). \(swap.ru)", en: "\(ramSub.en). \(swap.en)")
+        }
+        var rows: [JunkItem] = [
             JunkItem(
-                id: "pulse-app-\(app.name)",
+                id: "pulse-ram",
                 module: .pulse,
-                title: Line.proper(app.name),
-                subtitle: Copy.appRamHint,
+                title: snap.pressure.title,
+                subtitle: ramSub,
                 url: home,
-                bytes: app.bytes,
+                bytes: max(snap.used, 1),
+                selected: false,
+                kind: .advice,
+                keepsLogins: false
+            ),
+            JunkItem(
+                id: "pulse-cpu",
+                module: .pulse,
+                title: snap.cpuPressure.cpuTitle,
+                subtitle: Copy.cpuLine(busy: snap.cpuBusy, load: snap.loadAvg),
+                url: home,
+                bytes: max(Int64(snap.cpuBusy * 1_000_000), 1),
                 selected: false,
                 kind: .advice,
                 keepsLogins: false
             )
+        ]
+        for app in snap.apps.prefix(16) {
+            let tabHint = browserNames.contains(app.name)
+            rows.append(JunkItem(
+                id: "pulse-app-\(app.name)",
+                module: .pulse,
+                title: Line.proper(app.name),
+                subtitle: Copy.appPerfHint(
+                    ram: app.bytes,
+                    cpu: app.cpu,
+                    parts: app.children.count,
+                    browser: tabHint
+                ),
+                url: home,
+                bytes: max(app.bytes, 1),
+                selected: false,
+                kind: .advice,
+                keepsLogins: false
+            ))
+            for child in app.children.prefix(20) {
+                rows.append(JunkItem(
+                    id: "pulse-child:\(app.name):\(child.pid):\(child.label)",
+                    module: .pulse,
+                    title: Line.proper(child.label),
+                    subtitle: Copy.procPerfHint(ram: child.bytes, cpu: child.cpu, pid: child.pid),
+                    url: home,
+                    bytes: max(child.bytes, 1),
+                    selected: false,
+                    kind: .advice,
+                    keepsLogins: false
+                ))
+            }
         }
+        CamLog.line("pulse junk apps=\(snap.apps.prefix(16).count) used=\(snap.used) cpu=\(Int(snap.cpuBusy))")
+        return rows
     }
+
+    private static let browserNames: Set<String> = [
+        "Safari", "Google Chrome", "Microsoft Edge", "Brave Browser", "Chromium", "Yandex", "Arc", "Firefox"
+    ]
 
     static func junk(fromTabs snap: PulseSnapshot) -> [JunkItem] {
         snap.tabs.map { tab in
@@ -120,11 +231,14 @@ enum LiveProbe {
                 id: "pulse-tab:\(tab.window):\(tab.tabIndex):\(tab.browser)",
                 module: .pulse,
                 title: Line.proper(tab.title.isEmpty ? host : tab.title),
-                subtitle: Line.proper("\(tab.browser) · \(host)"),
+                subtitle: Line(
+                    ru: "\(tab.browser) · \(host). \(Copy.tabRamHint.ru)",
+                    en: "\(tab.browser) · \(host). \(Copy.tabRamHint.en)"
+                ),
                 url: URL(string: tab.url) ?? FileManager.default.homeDirectoryForCurrentUser,
                 bytes: max(tab.estimate, 1),
                 selected: false,
-                kind: .advice,
+                kind: .closeTab,
                 keepsLogins: true
             )
         }
@@ -167,18 +281,6 @@ enum LiveProbe {
         }
     }
 
-    static func protect() -> [ProtectFinding] {
-        var out: [ProtectFinding] = []
-        out.append(contentsOf: adwareApps())
-        out.append(contentsOf: adwareSupport())
-        out.append(contentsOf: shadyAgents())
-        if let hosts = hostsFinding() { out.append(hosts) }
-        return out.sorted { a, b in
-            if a.severity.sort != b.severity.sort { return a.severity.sort < b.severity.sort }
-            return a.bytes > b.bytes
-        }
-    }
-
     static func startup() -> [StartupRow] {
         var rows = launchAgents() + loginItems()
         rows.sort {
@@ -190,19 +292,70 @@ enum LiveProbe {
     }
 
     static func revealTab(item: JunkItem) {
+        guard let tab = tab(from: item) else { return }
+        revealTab(tab)
+    }
+
+    static func closeTab(item: JunkItem) -> Bool {
+        guard let tab = tab(from: item) else { return false }
+        return closeTab(tab)
+    }
+
+    @MainActor
+    static func activateApp(item: JunkItem) {
+        guard item.id.hasPrefix("pulse-app-") else { return }
+        let name = String(item.id.dropFirst("pulse-app-".count))
+        activateApp(named: name)
+    }
+
+    @MainActor
+    static func activateApp(named name: String) {
+        let apps = NSWorkspace.shared.runningApplications
+        if let app = apps.first(where: { $0.localizedName == name && $0.activationPolicy == .regular }) {
+            app.activate()
+            return
+        }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId(forAppName: name)) {
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+            return
+        }
+        let candidates = [
+            "/Applications/\(name).app",
+            NSHomeDirectory() + "/Applications/\(name).app"
+        ]
+        for path in candidates where FileManager.default.fileExists(atPath: path) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            return
+        }
+    }
+
+    private static func bundleId(forAppName name: String) -> String {
+        switch name {
+        case "Safari": return "com.apple.Safari"
+        case "Google Chrome": return "com.google.Chrome"
+        case "Microsoft Edge": return "com.microsoft.edgemac"
+        case "Brave Browser": return "com.brave.Browser"
+        case "Arc": return "company.thebrowser.Browser"
+        case "Telegram": return "ru.keepcoder.Telegram"
+        case "Cursor": return "com.todesktop.230313mzl4w4u92"
+        default: return ""
+        }
+    }
+
+    private static func tab(from item: JunkItem) -> LiveTab? {
         let raw = item.id
-        guard raw.hasPrefix("pulse-tab:") else { return }
+        guard raw.hasPrefix("pulse-tab:") else { return nil }
         let rest = String(raw.dropFirst("pulse-tab:".count))
         let parts = rest.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
-        guard parts.count == 3, let win = Int(parts[0]), let idx = Int(parts[1]) else { return }
-        revealTab(LiveTab(
+        guard parts.count == 3, let win = Int(parts[0]), let idx = Int(parts[1]) else { return nil }
+        return LiveTab(
             browser: String(parts[2]),
             title: item.title.ru,
             url: item.url.absoluteString,
-            estimate: 0,
+            estimate: item.bytes,
             window: win,
             tabIndex: idx
-        ))
+        )
     }
 
     static func revealTab(_ tab: LiveTab) {
@@ -228,7 +381,35 @@ enum LiveProbe {
             end tell
             """
         }
-        _ = runAppleScript(script)
+        _ = runAppleScript(script, seconds: 3)
+    }
+
+    static func closeTab(_ tab: LiveTab) -> Bool {
+        let script: String
+        if tab.browser == "Safari" {
+            script = """
+            tell application "Safari"
+              if (count of windows) ≥ \(tab.window) then
+                tell window \(tab.window)
+                  if (count of tabs) ≥ \(tab.tabIndex) then close tab \(tab.tabIndex)
+                end tell
+              end if
+            end tell
+            """
+        } else {
+            script = """
+            tell application "\(tab.browser)"
+              if (count of windows) ≥ \(tab.window) then
+                tell window \(tab.window)
+                  if (count of tabs) ≥ \(tab.tabIndex) then close tab \(tab.tabIndex)
+                end tell
+              end if
+            end tell
+            """
+        }
+        let result = runAppleScript(script, seconds: 3)
+        CamLog.line("close tab \(tab.browser) w=\(tab.window) i=\(tab.tabIndex) denied=\(result.denied) out=\(result.output.prefix(40))")
+        return !result.denied
     }
 
     // MARK: Memory
@@ -267,43 +448,92 @@ enum LiveProbe {
         return (Int64(total), Int64(used), Int64(wired), Int64(compressed), swap, pressure)
     }
 
+    private static func cpuLoad() -> (busy: Double, load: Double, pressure: PulsePressure) {
+        var samples = [Double](repeating: 0, count: 3)
+        _ = samples.withUnsafeMutableBufferPointer { getloadavg($0.baseAddress, 3) }
+        let load = samples[0]
+        var ncpu: Int32 = 1
+        var ncpuLen = MemoryLayout<Int32>.size
+        sysctlbyname("hw.logicalcpu", &ncpu, &ncpuLen, nil, 0)
+        let cores = max(Double(ncpu), 1)
+        // Rough busy % from 1-minute load vs logical CPUs.
+        let busy = min(100, max(0, (load / cores) * 100))
+        let pressure: PulsePressure
+        if busy >= 85 || load >= cores * 1.4 { pressure = .critical }
+        else if busy >= 55 || load >= cores * 0.85 { pressure = .warn }
+        else { pressure = .normal }
+        return (busy, load, pressure)
+    }
+
     private static func topApps() -> [LiveApp] {
-        let task = Process()
-        let out = Pipe()
-        task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-axo", "pid=,rss=,command="]
-        task.standardOutput = out
-        task.standardError = Pipe()
-        do { try task.run() } catch { return [] }
-        task.waitUntilExit()
-        let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        var grouped: [String: (bytes: Int64, pids: [Int32])] = [:]
-        for line in text.split(whereSeparator: \.isNewline) {
+        CamLog.line("pulse ps begin")
+        let ran = CamProcess.run(
+            path: "/bin/ps",
+            arguments: ["-axo", "pid=,pcpu=,rss=,command="],
+            timeout: 5
+        )
+        if ran.timedOut {
+            CamLog.line("pulse ps timeout")
+        } else {
+            CamLog.line("pulse ps bytes=\(ran.out.utf8.count) status=\(ran.status)")
+        }
+        struct Acc {
+            var bytes: Int64 = 0
+            var cpu: Double = 0
+            var pids: [Int32] = []
+            var children: [LiveProc] = []
+        }
+        var grouped: [String: Acc] = [:]
+        for line in ran.out.split(whereSeparator: \.isNewline) {
             let raw = line.trimmingCharacters(in: .whitespaces)
-            let parts = raw.split(maxSplits: 2, whereSeparator: \.isWhitespace)
-            guard parts.count >= 3,
+            let parts = raw.split(maxSplits: 3, whereSeparator: \.isWhitespace)
+            guard parts.count >= 4,
                   let pid = Int32(parts[0]),
-                  let rssKB = Int64(parts[1]) else { continue }
-            let command = String(parts[2])
+                  let cpu = Double(parts[1]),
+                  let rssKB = Int64(parts[2]) else { continue }
+            let command = String(parts[3])
             if shouldIgnore(command) { continue }
             let name = appName(from: command)
             let bytes = rssKB * 1024
-            var entry = grouped[name] ?? (0, [])
+            let label = helperLabel(from: command, app: name)
+            var entry = grouped[name] ?? Acc()
             entry.bytes += bytes
+            entry.cpu += cpu
             entry.pids.append(pid)
+            entry.children.append(LiveProc(label: label, bytes: bytes, cpu: cpu, pid: pid))
             grouped[name] = entry
         }
         return grouped
-            .map { LiveApp(name: $0.key, bytes: $0.value.bytes, pids: $0.value.pids) }
-            .filter { $0.bytes >= 40_000_000 }
-            .sorted { $0.bytes > $1.bytes }
+            .map { key, acc in
+                let kids = acc.children.sorted {
+                    if $0.bytes != $1.bytes { return $0.bytes > $1.bytes }
+                    return $0.cpu > $1.cpu
+                }
+                return LiveApp(name: key, bytes: acc.bytes, cpu: acc.cpu, pids: acc.pids, children: kids)
+            }
+            .filter { $0.bytes >= 12_000_000 || $0.cpu >= 8 }
+            .sorted {
+                let sa = $0.bytes + Int64($0.cpu * 8_000_000)
+                let sb = $1.bytes + Int64($1.cpu * 8_000_000)
+                return sa > sb
+            }
+    }
+
+    private static func helperLabel(from command: String, app: String) -> String {
+        if let range = command.range(of: ".app/Contents/") {
+            let after = String(command[range.upperBound...])
+            let leaf = URL(fileURLWithPath: after).lastPathComponent
+            if !leaf.isEmpty, leaf != app { return leaf }
+        }
+        let base = URL(fileURLWithPath: command.split(separator: " ").first.map(String.init) ?? command).lastPathComponent
+        return base.isEmpty ? app : base
     }
 
     private static func shouldIgnore(_ command: String) -> Bool {
         let skip = [
             "kernel_task", "launchd", "WindowServer", "loginwindow",
             "syspolicyd", "runningboardd", "logd", "cfprefsd",
-            "CleanAlephaMac98"
+            "CleanAlephaMac98", "chrome_crashpad", "SafariWidgetExt"
         ]
         return skip.contains { command.contains($0) }
     }
@@ -315,6 +545,7 @@ enum LiveProbe {
             ("Brave Browser", "Brave Browser"),
             ("Yandex", "Yandex"),
             ("Firefox", "Firefox"),
+            ("com.apple.WebKit", "Safari"),
             ("Safari", "Safari"),
             ("Arc.app", "Arc"),
             ("Cursor", "Cursor"),
@@ -331,7 +562,7 @@ enum LiveProbe {
         return URL(fileURLWithPath: command.split(separator: " ").first.map(String.init) ?? command).lastPathComponent
     }
 
-    private static func browserTabs(apps: [LiveApp]) -> ([LiveTab], Line?) {
+    private static func browserTabs(apps: [LiveApp], only allowed: Set<String>?) -> ([LiveTab], Line?) {
         let browsers: [(app: String, scriptName: String, bundles: [String])] = [
             ("Safari", "Safari", ["com.apple.Safari"]),
             ("Google Chrome", "Google Chrome", ["com.google.Chrome"]),
@@ -344,11 +575,23 @@ enum LiveProbe {
         var tabs: [LiveTab] = []
         var denied = false
         for spec in browsers {
-            guard browserRunning(name: spec.app, bundles: spec.bundles) else { continue }
-            let result = runAppleScript(tabScript(for: spec.scriptName))
+            let running: Bool
+            if let allowed {
+                running = allowed.contains(spec.app)
+            } else {
+                running = browserRunning(name: spec.app, bundles: spec.bundles)
+            }
+            guard running else {
+                CamLog.line("pulse skip \(spec.app) – not running with a window")
+                continue
+            }
+            let started = Date()
+            let result = runAppleScript(tabScript(for: spec.scriptName), seconds: 2)
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
             if result.denied { denied = true }
-            let rss = apps.first(where: { $0.name == spec.app })?.bytes ?? 0
             let parsed = parseTabs(result.output, browser: spec.scriptName)
+            CamLog.line("pulse tabs \(spec.app) ms=\(ms) denied=\(result.denied) tabs=\(parsed.count)")
+            let rss = apps.first(where: { $0.name == spec.app })?.bytes ?? 0
             let share = parsed.isEmpty ? 0 : rss / Int64(parsed.count)
             for var tab in parsed {
                 tab.estimate = share
@@ -362,8 +605,45 @@ enum LiveProbe {
 
     private static func browserRunning(name: String, bundles: [String]) -> Bool {
         NSWorkspace.shared.runningApplications.contains { app in
-            if let id = app.bundleIdentifier, bundles.contains(id) { return true }
-            return app.localizedName == name
+            guard app.activationPolicy == .regular, !app.isHidden else { return false }
+            let matches: Bool
+            if let id = app.bundleIdentifier, bundles.contains(id) {
+                matches = true
+            } else {
+                matches = app.localizedName == name
+            }
+            guard matches else { return false }
+            return hasOnscreenWindow(pid: app.processIdentifier)
+        }
+    }
+
+    private static func hasOnscreenWindow(pid: pid_t) -> Bool {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return true
+        }
+        return list.contains { info in
+            let owner: pid_t?
+            if let n = info[kCGWindowOwnerPID as String] as? NSNumber {
+                owner = n.int32Value
+            } else if let i = info[kCGWindowOwnerPID as String] as? Int {
+                owner = pid_t(i)
+            } else {
+                owner = info[kCGWindowOwnerPID as String] as? pid_t
+            }
+            let layer: Int
+            if let n = info[kCGWindowLayer as String] as? NSNumber {
+                layer = n.intValue
+            } else {
+                layer = info[kCGWindowLayer as String] as? Int ?? 0
+            }
+            let bounds = info[kCGWindowBounds as String] as? [String: Any]
+            let w: CGFloat
+            if let n = bounds?["Width"] as? NSNumber { w = CGFloat(truncating: n) }
+            else { w = bounds?["Width"] as? CGFloat ?? 0 }
+            let h: CGFloat
+            if let n = bounds?["Height"] as? NSNumber { h = CGFloat(truncating: n) }
+            else { h = bounds?["Height"] as? CGFloat ?? 0 }
+            return owner == pid && layer == 0 && w > 80 && h > 80
         }
     }
 
@@ -444,11 +724,15 @@ enum LiveProbe {
             if task.isRunning {
                 kill(task.processIdentifier, SIGKILL)
             }
+            CamLog.line("osascript timeout after \(Int(seconds))s")
             return ("", false)
         }
 
         let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let errText = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        if !errText.isEmpty {
+            CamLog.line("osascript err \(errText.replacingOccurrences(of: "\n", with: " ").prefix(180))")
+        }
         if errText.contains("(-1743)") || errText.contains("not allowed to send") {
             return ("", true)
         }
@@ -457,18 +741,113 @@ enum LiveProbe {
 
     // MARK: Protect
 
+    /// Known Mac adware / PUP / scareware / bundlers – name fragments only.
+    /// Never flag CleanMyMac / our app. Not a signature AV database.
     private static let adwareNeedles: [String] = [
-        "mackeeper", "genieo", "installmac", "bundlore", "searchmarquis", "search marquis",
-        "advanced mac cleaner", "adware doctor", "macreviver", "pckeeper",
-        "shlayer", "pirrit", "vsearch", "maxoffer", "macprotector",
-        "macoptimizerpro", "myosx", "osx.adware", "imacros adware"
+        // classic adware / bundlers
+        "mackeeper", "mac keeper", "zeobit", "clique", "genieo", "installmac", "installcore",
+        "bundlore", "searchmarquis", "search marquis", "searchme", "websearch",
+        "spigot", "conduit", "crossrider", "yontoo", "softonic",
+        "shlayer", "pirrit", "vsearch", "maxoffer", "operator adware",
+        "hiddad", "shedun", "osx.adware", "osx adware", "macos.adware",
+        // fake cleaners / optimizers
+        "advanced mac cleaner", "adware doctor", "macreviver", "mac reviver",
+        "pckeeper", "pc keeper", "macprotector", "mac protector",
+        "macoptimizerpro", "mac optimizer pro", "macoptimizer", "mac optimizer",
+        "myosx", "imacros adware", "supermac cleaner", "super mac cleaner",
+        "mac cleaner pro", "maccleaner", "disk doctor", "system mechanic",
+        "cleangenius", "clean genius", "driver genius", "optimizer pro",
+        "turbo cleaner", "total mac cleaner", "mac speedup", "mac speed up",
+        "speedymac", "speedy mac", "mac booster", "macbooster",
+        "cleanupmypro", "cleanup my pro", "cleanmymac alternatives junk",
+        "macmemoryclean", "memory clean pro", "ram cleaner pro",
+        "dr. cleaner", "dr cleaner", "go clean my mac", "gocleanmymac",
+        "cleanmaster for mac", "clean master mac", "wisecleaner", "wise cleaner",
+        "iomacsoft", "io bit", "iobit", "advanced systemcare",
+        "asc mac", "malwarebytes adware", // only if named adware helper – careful
+        // scareware / fake AV
+        "macdefender", "mac defender", "macsecurity", "mac security alert",
+        "macos virus", "apple security alert", "virus shield mac",
+        "antivirus mac pro", "mac antivirus shield", "shield virus mac",
+        "macguard", "mac guard", "safemac", "safe mac pro",
+        // toolbars / redirects
+        "couponserver", "coupon server", "dealply", "priceblink",
+        "shopperpro", "shopper pro", "browser protector",
+        "defaulttab", "default tab", "hoptopad", "hop to pad",
+        "outobrowser", "outo browser", "webdiscover", "web discover",
+        "search.conduit", "mysearchdial", "search dial",
+        "ask toolbar", "babylon toolbar", "delta search",
+        // crypto / miners disguised as utilities (name heuristics)
+        "xmrig", "minerd", "cpuminer", "cgminer", "ethminer",
+        "coinhive", "cryptonight helper",
+        // RU / CIS market junk names often seen
+        "амк клинер", "супер мак клинер", "оптимизатор мак",
+        "ускоритель мак", "очиститель мак про",
+        // installers / droppers
+        "flashplayerinstaller", "flash player installer", "adobe flash installer fake",
+        "java update helper adware", "quicktime installer adware",
+        "downloadmanager adware", "download manager adware",
+        "updatehelper adware", "update helper adware",
+        "installer.app adware", "setupmac", "setup mac adware",
+        "appstorehelper adware", "app store helper adware",
+        // specific known families / variants
+        "osx.shlayer", "osx.bundlore", "osx.genieo", "osx.pirrit",
+        "osx.vsearch", "osx.mackeeper", "osx.installcore",
+        "adware.macos", "pup.macos", "pup.optional",
+        "macteal", "mac teal", "tealc", "premieropinion", "premier opinion",
+        "opinionspinner", "opinion spinner", "crossrider",
+        "luminati", "bright data sdk adware",
+        "mypcbackup", "my pc backup", "reimage repair",
+        "driverupdate", "driver update mac",
+        "registry winmac", "winmac",
+        "advancedmaccare", "advanced mac care",
+        "maccare", "mac care pro", "maccarepro",
+        "cleanapp", "clean app pro", // borderline – often PUP branding
+        "privacy Desktop", "privacydesktop",
+        "totalav", "total av mac", // often PUP bundling – keep
+        "pc protect", "pcprotect",
+        "restoro", "reimage",
+        "stopzilla", "spysweeper",
+        "errorcleaner", "error cleaner",
+        "winzipper", "zipinstaller",
+        // browser hijack helpers
+        "searchassistant", "search assistant",
+        "newtab hijack", "startpage hijack",
+        "homepage hijacker", "redirectservice",
+        "omnibar search", "searchomnibar"
+    ]
+
+    private static let adwareAllowExact: Set<String> = [
+        "cleanmymac", "cleanmymac x", "cleanalephamac98", "cleanalephamac",
+        "malwarebytes", "bitdefender", "norton", "avast", "avg", "kaspersky",
+        "sophos", "intego", "clamxav", "little snitch", "lulu", "blockblock",
+        "oversight", "knockknock", "reikey", "taskexplorer"
     ]
 
     private static func looksAdware(_ name: String) -> Bool {
         let n = name.lowercased()
-        if n.contains("cleanmymac") { return false }
-        if n.contains("cleanalephamac") { return false }
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+        // Never flag us, CleanMyMac, or real security tools.
+        for safe in adwareAllowExact where n.contains(safe) {
+            return false
+        }
         return adwareNeedles.contains { n.contains($0) }
+    }
+
+    static func protect() -> [ProtectFinding] {
+        var out: [ProtectFinding] = []
+        out.append(contentsOf: adwareApps())
+        out.append(contentsOf: adwareSupport())
+        out.append(contentsOf: adwareCaches())
+        out.append(contentsOf: adwarePreferences())
+        out.append(contentsOf: adwareInternetPlugins())
+        out.append(contentsOf: shadyAgents())
+        if let hosts = hostsFinding() { out.append(hosts) }
+        return out.sorted { a, b in
+            if a.severity.sort != b.severity.sort { return a.severity.sort < b.severity.sort }
+            return a.bytes > b.bytes
+        }
     }
 
     private static func adwareApps() -> [ProtectFinding] {
@@ -516,6 +895,77 @@ enum LiveProbe {
         return out
     }
 
+    private static func adwareCaches() -> [ProtectFinding] {
+        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
+        guard let kids = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+            return []
+        }
+        var out: [ProtectFinding] = []
+        for url in kids where looksAdware(url.lastPathComponent) {
+            let b = DiskSizer.bytes(at: url)
+            guard b > 16_384 else { continue }
+            out.append(ProtectFinding(
+                id: "cache-\(url.lastPathComponent)",
+                title: Line.proper(url.lastPathComponent),
+                subtitle: Copy.knownPUPCache,
+                severity: .high,
+                url: url,
+                bytes: b,
+                selected: false,
+                kind: .wipeChildren
+            ))
+        }
+        return out
+    }
+
+    private static func adwarePreferences() -> [ProtectFinding] {
+        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences")
+        guard let kids = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+            return []
+        }
+        var out: [ProtectFinding] = []
+        for url in kids where url.pathExtension == "plist" && looksAdware(url.lastPathComponent) {
+            out.append(ProtectFinding(
+                id: "pref-\(url.lastPathComponent)",
+                title: Line.proper(url.deletingPathExtension().lastPathComponent),
+                subtitle: Copy.knownPUPPrefs,
+                severity: .medium,
+                url: url,
+                bytes: max(DiskSizer.bytes(at: url), 4_096),
+                selected: false,
+                kind: .deleteItem
+            ))
+        }
+        return out
+    }
+
+    private static func adwareInternetPlugins() -> [ProtectFinding] {
+        let roots = [
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Internet Plug-Ins"),
+            URL(fileURLWithPath: "/Library/Internet Plug-Ins")
+        ]
+        var out: [ProtectFinding] = []
+        for root in roots {
+            guard let kids = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+                continue
+            }
+            for url in kids where looksAdware(url.lastPathComponent) {
+                let b = DiskSizer.bytes(at: url)
+                out.append(ProtectFinding(
+                    id: "plugin-\(url.path)",
+                    title: Line.proper(url.lastPathComponent),
+                    subtitle: Copy.knownPUPPlugin,
+                    severity: .high,
+                    url: url,
+                    bytes: max(b, 4_096),
+                    selected: false,
+                    kind: .deleteItem
+                ))
+            }
+        }
+        return out
+    }
+
     private static func shadyAgents() -> [ProtectFinding] {
         let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents")
         guard let kids = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
@@ -524,10 +974,14 @@ enum LiveProbe {
         var out: [ProtectFinding] = []
         for url in kids where url.pathExtension == "plist" {
             if url.lastPathComponent.contains("CleanAlephaMac98") { continue }
-            if looksAdware(url.lastPathComponent) {
+            guard let dict = plist(url) else { continue }
+            let label = (dict["Label"] as? String) ?? url.deletingPathExtension().lastPathComponent
+            let program = programPath(dict)
+            let hay = "\(url.lastPathComponent) \(label) \(program)"
+            if looksAdware(hay) {
                 out.append(ProtectFinding(
                     id: "ag-\(url.lastPathComponent)",
-                    title: Line.proper(url.deletingPathExtension().lastPathComponent),
+                    title: Line.proper(label),
                     subtitle: Copy.adwareAgent,
                     severity: .high,
                     url: url,
@@ -537,8 +991,6 @@ enum LiveProbe {
                 ))
                 continue
             }
-            guard let dict = plist(url) else { continue }
-            let program = programPath(dict)
             if program.isEmpty { continue }
             if program.contains("/Applications/") || program.hasPrefix("/usr/") || program.hasPrefix("/System/") {
                 continue
@@ -547,7 +999,7 @@ enum LiveProbe {
             if isSigned(program) { continue }
             out.append(ProtectFinding(
                 id: "unsigned-\(url.lastPathComponent)",
-                title: Line.proper(url.deletingPathExtension().lastPathComponent),
+                title: Line.proper(label),
                 subtitle: Copy.unsignedAgent,
                 severity: .medium,
                 url: url,
@@ -650,14 +1102,8 @@ enum LiveProbe {
     }
 
     private static func isSigned(_ path: String) -> Bool {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        task.arguments = ["-v", path]
-        task.standardOutput = Pipe()
-        task.standardError = Pipe()
-        do { try task.run() } catch { return false }
-        task.waitUntilExit()
-        return task.terminationStatus == 0
+        let ran = CamProcess.run(path: "/usr/bin/codesign", arguments: ["-v", path], timeout: 3)
+        return !ran.timedOut && ran.status == 0
     }
 }
 

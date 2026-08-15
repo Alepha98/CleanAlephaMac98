@@ -58,6 +58,8 @@ enum Copy {
     static let cleanTrash = Line(ru: "Очистить корзину", en: "Empty Trash")
     static let cleaning = Line(ru: "Очистка…", en: "Cleaning…")
     static let scanAgain = Line(ru: "Сканировать снова", en: "Scan again")
+    static let openLayer = Line(ru: "Открыть", en: "Open")
+    static let smartOverview = Line(ru: "По разделам", en: "By section")
     static let stop = Line(ru: "Остановить", en: "Stop")
     static let safe = Line(ru: "Безопасное", en: "Safe")
     static let deselect = Line(ru: "Снять выбор", en: "Clear selection")
@@ -208,46 +210,88 @@ enum Copy {
     static let defaultOff = Line(ru: "по умолчанию выкл", en: "off by default")
 
     static let liveRefresh = Line(ru: "Обновить", en: "Refresh")
-    static let modulePulse = Line(ru: "Память", en: "Memory")
+    static let modulePulse = Line(ru: "Быстродействие", en: "Performance")
     static let moduleProtect = Line(ru: "Проверка", en: "Check")
     static let moduleStartup = Line(ru: "Автозагрузка", en: "Startup")
     static let subPulse = Line(
-        ru: "Кто жрёт память. Вкладки покажем, браузер не закроем.",
-        en: "What's eating RAM. We list the tabs, we don't quit the browser."
+        ru: "Память, CPU, кто тормозит. Тап по приложению – что внутри.",
+        en: "RAM, CPU, what's slow. Tap an app to see what's inside."
     )
     static let subProtect = Line(
-        ru: "Известный adware и странные агенты. Не антивирус.",
-        en: "Known adware and odd agents. Not an antivirus."
+        ru: "Известный adware, PUP и странные агенты. Не антивирус.",
+        en: "Known adware, PUPs, and odd agents. Not an antivirus."
     )
     static let subStartup = Line(
         ru: "Что стартует вместе с тобой.",
         en: "What launches when you log in."
     )
     static let weDontQuitBrowsers = Line(
-        ru: "Браузер сам не закроем. Лишнюю вкладку закрой руками.",
-        en: "We won't quit the browser. Close the extra tab yourself."
+        ru: "Браузер целиком не трогаем. Отметь вкладки – «Очистить» их закроет.",
+        en: "We won't quit the browser. Select tabs – Clean closes them."
     )
     static let showTab = Line(ru: "Показать вкладку", en: "Show tab")
+    static let closeTabNow = Line(ru: "Закрыть вкладку", en: "Close tab")
+    static let openApp = Line(ru: "Открыть снаружи", en: "Open outside")
+    static let pulseBack = Line(ru: "К списку", en: "Back to list")
+    static let pulseInside = Line(ru: "Что внутри", en: "What's inside")
+    static let drillBadge = Line(ru: "внутри", en: "inside")
     static let estimateBadge = Line(ru: "оценка", en: "guess")
+    static let tabCloseBadge = Line(ru: "можно закрыть", en: "can close")
+    static let openAppBadge = Line(ru: "открыть", en: "open")
     static let recommendBadge = Line(ru: "совет", en: "tip")
     static let needAutomation = Line(
-        ru: "macOS не дал прочитать вкладки. В Автоматизации разреши Safari и Chrome. Мы только читаем.",
-        en: "macOS blocked the tabs. Allow Automation for Safari and Chrome. We only read them."
+        ru: "macOS не дал прочитать вкладки. В Автоматизации разреши Safari и Chrome.",
+        en: "macOS blocked the tabs. Allow Automation for Safari and Chrome."
     )
     static let tabsTitle = Line(ru: "Вкладки", en: "Tabs")
     static let appsTitle = Line(ru: "Кто держит память", en: "What's holding RAM")
-    static let pulseIdle = Line(ru: "Обнови, посмотрим память и вкладки.", en: "Refresh to see memory and tabs.")
+    static let pulseIdle = Line(
+        ru: "Сканируй – память, CPU и кто тормозит Mac.",
+        en: "Scan for RAM, CPU, and what's slowing the Mac."
+    )
     static let ramHonest = Line(
-        ru: "Память кнопкой не освободить. Если тупит – закрой тяжёлую вкладку.",
-        en: "There's no Free RAM button. If it's slow – close a heavy tab."
+        ru: "Сводка по быстродействию. Тап по приложению – разбор внутри. Процессы не убиваем.",
+        en: "Performance overview. Tap an app for a breakdown. We don't kill processes."
     )
     static let appRamHint = Line(
-        ru: "Процесс живой. Мы его не убиваем.",
-        en: "It's running. We won't kill it."
+        ru: "Тап – что внутри жрёт память и CPU.",
+        en: "Tap to see what's using RAM and CPU inside."
+    )
+    static let tabRamHint = Line(
+        ru: "Отметь и нажми Очистить – закроем вкладку.",
+        en: "Select and press Clean – we'll close the tab."
     )
     static let pressureNormal = Line(ru: "Памяти хватает", en: "Memory's fine")
     static let pressureWarn = Line(ru: "Память поджимает", en: "Memory's tight")
     static let pressureCritical = Line(ru: "Уже своп", en: "Already swapping")
+    static let cpuNormal = Line(ru: "CPU спокойный", en: "CPU is calm")
+    static let cpuWarn = Line(ru: "CPU загружен", en: "CPU is busy")
+    static let cpuCritical = Line(ru: "CPU на пределе", en: "CPU is maxed")
+
+    static func cpuLine(busy: Double, load: Double) -> Line {
+        Line(
+            ru: "Загрузка ~\(Int(busy))%. Load \(String(format: "%.2f", load))",
+            en: "About \(Int(busy))% busy. Load \(String(format: "%.2f", load))"
+        )
+    }
+
+    static func appPerfHint(ram: Int64, cpu: Double, parts: Int, browser: Bool) -> Line {
+        let ramS = ByteFormat.string(ram, .ru)
+        let ramE = ByteFormat.string(ram, .en)
+        let extraRu = browser ? " Тап – вкладки и процессы." : " Тап – процессы внутри."
+        let extraEn = browser ? " Tap for tabs and processes." : " Tap for processes inside."
+        return Line(
+            ru: "\(ramS) RAM · CPU \(String(format: "%.0f", cpu))% · \(parts) шт.\(extraRu)",
+            en: "\(ramE) RAM · CPU \(String(format: "%.0f", cpu))% · \(parts) parts.\(extraEn)"
+        )
+    }
+
+    static func procPerfHint(ram: Int64, cpu: Double, pid: Int32) -> Line {
+        Line(
+            ru: "\(ByteFormat.string(ram, .ru)) · CPU \(String(format: "%.1f", cpu))% · pid \(pid)",
+            en: "\(ByteFormat.string(ram, .en)) · CPU \(String(format: "%.1f", cpu))% · pid \(pid)"
+        )
+    }
     static let protectClear = Line(ru: "Типичного adware нет", en: "No typical adware")
     static let protectClearSub = Line(
         ru: "Глянули приложения, агенты и hosts. Не полная проверка.",
@@ -259,6 +303,9 @@ enum Copy {
     )
     static let knownPUP = Line(ru: "известный мусор", en: "known junk")
     static let knownPUPSupport = Line(ru: "папка известного adware", en: "known adware folder")
+    static let knownPUPCache = Line(ru: "кэш известного adware", en: "known adware cache")
+    static let knownPUPPrefs = Line(ru: "настройки известного adware", en: "known adware prefs")
+    static let knownPUPPlugin = Line(ru: "плагин / расширение adware", en: "adware plug-in")
     static let adwareAgent = Line(ru: "агент известного adware", en: "known adware agent")
     static let unsignedAgent = Line(
         ru: "LaunchAgent без подписи, не из Applications. Сами не трогаем.",
