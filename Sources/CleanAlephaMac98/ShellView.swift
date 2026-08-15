@@ -10,9 +10,6 @@ struct ShellView: View {
         switch state.module {
         case .space: "space"
         case .tools: "tools"
-        case .pulse: "pulse"
-        case .protect: "protect"
-        case .startup: "startup"
         default: "scan"
         }
     }
@@ -33,9 +30,6 @@ struct ShellView: View {
                     switch state.module {
                     case .space: SpaceView()
                     case .tools: ToolsView()
-                    case .pulse: PulseView()
-                    case .protect: ProtectView()
-                    case .startup: StartupView()
                     default: ScanView()
                     }
                 }
@@ -285,13 +279,6 @@ private struct SidebarRow: View {
     @State private var hover = false
 
     private var sizeHint: String? {
-        if module == .pulse, let p = state.pulse {
-            return p.pressure.title.t(lang)
-        }
-        if module == .protect {
-            let n = state.protectFindings.filter { $0.severity == .high }.count
-            return n > 0 ? "\(n)" : nil
-        }
         guard module.isCleanupModule, state.hasScanned(module) else { return nil }
         let b = state.sidebarBytes(for: module)
         guard b > 0 else { return nil }

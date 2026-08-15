@@ -37,7 +37,7 @@ enum Janitor {
         case .advice:
             return .alreadyGone(counted: 0)
         case .removeAgent:
-            return removeAgent(item.url)
+            return removeAgent(item)
         case .removeLoginItem:
             return removeLoginItem(item)
         }
@@ -141,14 +141,15 @@ enum Janitor {
         return CleanOutcome(freed: freed, failed: anyFail && after > 16_384, leftover: after)
     }
 
-    private static func removeAgent(_ url: URL) -> CleanOutcome {
+    private static func removeAgent(_ item: JunkItem) -> CleanOutcome {
+        let url = item.url
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let p = url.standardizedFileURL.path
         guard p.hasPrefix(home), p.contains("/Library/LaunchAgents/"), url.pathExtension == "plist" else {
-            return .refused(leftover: 0)
+            return .refused(leftover: item.bytes)
         }
         if url.lastPathComponent.contains("CleanAlephaMac98") {
-            return .refused(leftover: 0)
+            return .refused(leftover: item.bytes)
         }
         let label = url.deletingPathExtension().lastPathComponent
         let task = Process()
@@ -163,7 +164,7 @@ enum Janitor {
         } catch {
             return .refused(leftover: DiskSizer.bytes(at: url))
         }
-        return CleanOutcome(freed: 0, failed: false, leftover: 0)
+        return CleanOutcome(freed: item.bytes, failed: false, leftover: 0)
     }
 
     private static func removeLoginItem(_ item: JunkItem) -> CleanOutcome {
@@ -173,7 +174,7 @@ enum Janitor {
         var error: NSDictionary?
         guard let script = NSAppleScript(source: source) else { return .refused(leftover: 0) }
         _ = script.executeAndReturnError(&error)
-        if error != nil { return .refused(leftover: 0) }
-        return CleanOutcome(freed: 0, failed: false, leftover: 0)
+        if error != nil { return .refused(leftover: item.bytes) }
+        return CleanOutcome(freed: item.bytes, failed: false, leftover: 0)
     }
 }

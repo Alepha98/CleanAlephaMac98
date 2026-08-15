@@ -45,8 +45,11 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
 
     var isCleanupModule: Bool {
         switch self {
-        case .smart, .junk, .mail, .trash, .leftovers, .large, .browsers, .dev, .messengers: true
-        case .pulse, .protect, .startup, .space, .tools: false
+        case .smart, .junk, .mail, .trash, .leftovers, .large, .browsers, .dev, .messengers,
+             .pulse, .protect, .startup:
+            true
+        case .space, .tools:
+            false
         }
     }
 
@@ -86,8 +89,11 @@ struct JunkItem: Identifiable, Equatable, Sendable {
     let kind: CleanKind
     let keepsLogins: Bool
 
-    /// Large files / Telegram history / rebuild caches — quieter when unchecked.
+    /// Large files / Telegram history / rebuild caches – quieter when unchecked.
     var isSecondaryRisk: Bool {
+        if module == .pulse { return true }
+        if module == .startup { return kind != .advice }
+        if module == .protect { return kind == .advice || id.hasPrefix("unsigned-") }
         if module == .large { return true }
         if id.contains("tg-d-") { return true }
         if kind == .deleteItem { return true }
@@ -102,6 +108,9 @@ struct JunkItem: Identifiable, Equatable, Sendable {
 
     /// Preset for «Безопасное»: caches on, trash / leftovers / history / huge off.
     var isSafePreset: Bool {
+        if module == .pulse { return false }
+        if module == .startup { return false }
+        if module == .protect { return !isSecondaryRisk }
         if isSecondaryRisk { return false }
         if kind == .emptyTrash { return false }
         if module == .leftovers { return false }
@@ -110,6 +119,8 @@ struct JunkItem: Identifiable, Equatable, Sendable {
     }
 
     var cautionBadge: Line? {
+        if module == .pulse, id.hasPrefix("pulse-tab:") { return Copy.estimateBadge }
+        if module == .pulse { return Copy.recommendBadge }
         if id.contains("tg-d-") { return Copy.historyBadge }
         if module == .leftovers { return Copy.leftoverBadge }
         if isRebuildCache { return Copy.rebuildBadge }

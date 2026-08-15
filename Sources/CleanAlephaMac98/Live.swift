@@ -95,24 +95,84 @@ enum LiveProbe {
         return next
     }
 
+    static func junk(fromMemory snap: PulseSnapshot) -> [JunkItem] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return snap.apps.prefix(12).map { app in
+            JunkItem(
+                id: "pulse-app-\(app.name)",
+                module: .pulse,
+                title: Line.proper(app.name),
+                subtitle: Copy.appRamHint,
+                url: home,
+                bytes: app.bytes,
+                selected: false,
+                kind: .advice,
+                keepsLogins: false
+            )
+        }
+    }
+
+    static func junk(fromTabs snap: PulseSnapshot) -> [JunkItem] {
+        snap.tabs.map { tab in
+            let host: String
+            if let url = URL(string: tab.url), let h = url.host { host = h } else { host = tab.url }
+            return JunkItem(
+                id: "pulse-tab:\(tab.window):\(tab.tabIndex):\(tab.browser)",
+                module: .pulse,
+                title: Line.proper(tab.title.isEmpty ? host : tab.title),
+                subtitle: Line.proper("\(tab.browser) · \(host)"),
+                url: URL(string: tab.url) ?? FileManager.default.homeDirectoryForCurrentUser,
+                bytes: max(tab.estimate, 1),
+                selected: false,
+                kind: .advice,
+                keepsLogins: true
+            )
+        }
+    }
+
+    static func junkProtect() -> [JunkItem] {
+        protect().compactMap { finding in
+            guard let url = finding.url else { return nil }
+            return JunkItem(
+                id: finding.id,
+                module: .protect,
+                title: finding.title,
+                subtitle: finding.subtitle,
+                url: url,
+                bytes: max(finding.bytes, 4_096),
+                selected: finding.severity == .high,
+                kind: finding.kind,
+                keepsLogins: false
+            )
+        }
+    }
+
+    static func junkStartup() -> [JunkItem] {
+        junk(fromStartup: startup())
+    }
+
+    static func junk(fromStartup rows: [StartupRow]) -> [JunkItem] {
+        rows.map { row in
+            JunkItem(
+                id: row.id,
+                module: .startup,
+                title: Line.proper(row.name),
+                subtitle: row.detail,
+                url: row.url,
+                bytes: max(DiskSizer.bytes(at: row.url), 4_096),
+                selected: false,
+                kind: row.ours || row.apple ? .advice : row.kind,
+                keepsLogins: false
+            )
+        }
+    }
+
     static func protect() -> [ProtectFinding] {
         var out: [ProtectFinding] = []
         out.append(contentsOf: adwareApps())
         out.append(contentsOf: adwareSupport())
         out.append(contentsOf: shadyAgents())
         if let hosts = hostsFinding() { out.append(hosts) }
-        if out.isEmpty {
-            out.append(ProtectFinding(
-                id: "clear",
-                title: Copy.protectClear,
-                subtitle: Copy.protectClearSub,
-                severity: .info,
-                url: nil,
-                bytes: 0,
-                selected: false,
-                kind: .advice
-            ))
-        }
         return out.sorted { a, b in
             if a.severity.sort != b.severity.sort { return a.severity.sort < b.severity.sort }
             return a.bytes > b.bytes
@@ -127,6 +187,22 @@ enum LiveProbe {
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
         return rows
+    }
+
+    static func revealTab(item: JunkItem) {
+        let raw = item.id
+        guard raw.hasPrefix("pulse-tab:") else { return }
+        let rest = String(raw.dropFirst("pulse-tab:".count))
+        let parts = rest.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+        guard parts.count == 3, let win = Int(parts[0]), let idx = Int(parts[1]) else { return }
+        revealTab(LiveTab(
+            browser: String(parts[2]),
+            title: item.title.ru,
+            url: item.url.absoluteString,
+            estimate: 0,
+            window: win,
+            tabIndex: idx
+        ))
     }
 
     static func revealTab(_ tab: LiveTab) {

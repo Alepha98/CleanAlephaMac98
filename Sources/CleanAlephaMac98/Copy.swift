@@ -177,7 +177,7 @@ enum Copy {
     static let stopScan = Line(ru: "Остановить сканирование", en: "Stop scanning")
     static let stopClean = Line(ru: "Остановить очистку", en: "Stop cleaning")
     static let orbIdle = Line(ru: "Стеклянная колба", en: "Glass flask")
-    static let scanHelp = Line(ru: "⌘R – пройти кэши и мусор", en: "⌘R – scan caches and junk")
+    static let scanHelp = Line(ru: "⌘R – сканировать", en: "⌘R – scan")
     static let cleanHelp = Line(ru: "⌘↩ – удалить выбранное", en: "⌘↩ – delete the selection")
     static let laterHelp = Line(ru: "Пропустить. Карточка в сайдбаре останется.", en: "Skip. The sidebar card stays.")
     static let fdaCardHelp = Line(

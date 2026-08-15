@@ -47,9 +47,6 @@ final class AppState {
     var scheduleSlots: [ScheduleSlot] = ScheduleStore.loadSlots()
     var scheduleNote: Line?
     var pulse: PulseSnapshot?
-    var protectFindings: [ProtectFinding] = []
-    var startupRows: [StartupRow] = []
-    var liveBusy = false
 
     var copyLang: CopyLang { language.resolved() }
 
@@ -133,9 +130,9 @@ final class AppState {
     }
 
     func hasScanned(_ m: Module) -> Bool {
-        if m == .space || m == .tools || m.isLiveModule { return false }
-        if scannedModules.contains(.smart) { return true }
-        if m == .smart { return !scannedModules.isEmpty }
+        if m == .space || m == .tools { return false }
+        if scannedModules.contains(.smart) && !m.isLiveModule { return true }
+        if m == .smart { return !scannedModules.isEmpty && scannedModules.contains(where: { $0.isCleanupModule && !$0.isLiveModule }) }
         return scannedModules.contains(m)
     }
 
@@ -144,16 +141,19 @@ final class AppState {
     }
 
     func sidebarBytes(for module: Module) -> Int64 {
-        if module == .space || module == .tools || module.isLiveModule { return 0 }
+        if module == .space || module == .tools { return 0 }
+        if module == .pulse, let p = pulse, hasScanned(.pulse) { return p.used }
         if module == .smart {
-            return items.filter { $0.bytes > 0 }.reduce(0) { $0 + $1.bytes }
+            return items.filter { $0.bytes > 0 && !$0.module.isLiveModule }.reduce(0) { $0 + $1.bytes }
         }
         return bytes(in: module)
     }
 
     func visibleItems() -> [JunkItem] {
         let pool = cleaning ? items : items.filter { $0.bytes > 0 }
-        let scoped = module == .smart ? pool : pool.filter { $0.module == module }
+        let scoped = module == .smart
+            ? pool.filter { !$0.module.isLiveModule }
+            : pool.filter { $0.module == module }
         return scoped.sorted {
             if $0.bytes != $1.bytes { return $0.bytes > $1.bytes }
             return $0.title.ru.localizedStandardCompare($1.title.ru) == .orderedAscending
@@ -300,10 +300,6 @@ final class AppState {
     @MainActor
     func requestScan() {
         guard canScan else { return }
-        if module.isLiveModule {
-            refreshLive(module)
-            return
-        }
         if !module.isCleanupModule {
             module = .smart
         }
@@ -329,6 +325,10 @@ final class AppState {
     func scan() async {
         guard !scanning, !cleaning else { return }
         let scope = module
+        if scope.isLiveModule {
+            await scanLive(scope)
+            return
+        }
         let stages = Scanner.ScanStage.stages(for: scope)
         guard !stages.isEmpty else { return }
 
@@ -405,7 +405,7 @@ final class AppState {
 
         if scope == .smart {
             scannedModules.insert(.smart)
-            for m in Module.allCases where m.isCleanupModule { scannedModules.insert(m) }
+            for m in Module.allCases where m.isCleanupModule && !m.isLiveModule { scannedModules.insert(m) }
         }
 
         progress = 1
@@ -426,6 +426,110 @@ final class AppState {
         if let note = lastFailureNote {
             status = Line(ru: "\(status.ru) \(note.ru)", en: "\(status.en) \(note.en)")
         }
+        completed = true
+        GlassTick.play()
+    }
+
+    @MainActor
+    func scanLive(_ scope: Module) async {
+        scanning = true
+        scanFinished = false
+        cleaning = false
+        lastFailureNote = nil
+        statusStopped = false
+        displayedBytes = 0
+        progress = 0
+        refreshFDA()
+        items.removeAll { $0.module == scope }
+        scannedModules.remove(scope)
+
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        var completed = false
+        defer {
+            if !completed {
+                scanning = false
+                if Task.isCancelled {
+                    lastFailureNote = nil
+                    let hasFinds = items.contains { $0.module == scope && $0.bytes > 0 }
+                    scanFinished = hasFinds
+                    statusStopped = true
+                    status = hasFinds ? Copy.scanStoppedPartial : Copy.scanStoppedEmpty
+                    withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
+                        orbFill = hasFinds ? 0.88 : 0.42
+                    }
+                    if hasFinds { scannedModules.insert(scope) }
+                } else {
+                    scanFinished = true
+                    if lastFailureNote == nil {
+                        lastFailureNote = Copy.scanBroke
+                    }
+                    status = lastFailureNote ?? status
+                }
+            }
+        }
+
+        withAnimation(reduce ? .easeInOut(duration: 0.20) : .timingCurve(0.22, 1, 0.36, 1, duration: 0.18)) {
+            orbFill = 0.14
+        }
+        try? await Task.sleep(nanoseconds: reduce ? 80_000_000 : 180_000_000)
+        if Task.isCancelled { return }
+
+        status = Copy.scanning(scope.name)
+        withAnimation(Motion.level(reduce: reduce)) {
+            progress = 0.2
+            orbFill = 0.3
+        }
+
+        switch scope {
+        case .pulse:
+            let mem = await Background.run { LiveProbe.pulseMemory() }
+            if Task.isCancelled { return }
+            pulse = mem
+            items.append(contentsOf: LiveProbe.junk(fromMemory: mem))
+            withAnimation(Motion.level(reduce: reduce)) {
+                progress = 0.55
+                orbFill = 0.58
+                displayedBytes = selectedBytes
+            }
+            let withTabs = await Background.run { LiveProbe.pulseTabs(into: mem) }
+            if Task.isCancelled { return }
+            pulse = withTabs
+            items.removeAll { $0.module == .pulse && $0.id.hasPrefix("pulse-tab:") }
+            items.append(contentsOf: LiveProbe.junk(fromTabs: withTabs))
+            if let note = withTabs.tabAccess, note == Copy.needAutomation {
+                lastFailureNote = note
+            }
+        case .protect:
+            let rows = await Background.run { LiveProbe.junkProtect() }
+            if Task.isCancelled { return }
+            items.append(contentsOf: rows)
+        case .startup:
+            let rows = await Background.run { LiveProbe.junkStartup() }
+            if Task.isCancelled { return }
+            items.append(contentsOf: rows)
+        default:
+            break
+        }
+
+        scannedModules.insert(scope)
+        progress = 1
+        let empty = visibleItems().isEmpty
+        withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
+            scanning = false
+            scanFinished = true
+            orbFill = empty ? 0.12 : 0.88
+        }
+        if empty {
+            status = scope == .protect ? Copy.protectClear : Copy.layerClean
+        } else if scope == .pulse {
+            status = Copy.ramHonest
+        } else {
+            status = Copy.canClear(selected: selectedBytes, found: foundBytes)
+        }
+        if let note = lastFailureNote {
+            status = Line(ru: "\(status.ru) \(note.ru)", en: "\(status.en) \(note.en)")
+        }
+        displayedBytes = selectedBytes
         completed = true
         GlassTick.play()
     }
@@ -522,90 +626,6 @@ final class AppState {
         GlassTick.play()
         withAnimation(Motion.easeMicro) {
             items.removeAll { $0.bytes <= 0 }
-        }
-    }
-
-    func refreshLive(_ module: Module) {
-        guard module.isLiveModule, !liveBusy else { return }
-        liveBusy = true
-        Task { @MainActor in
-            switch module {
-            case .pulse:
-                let mem = await Background.run { LiveProbe.pulseMemory() }
-                pulse = mem
-                let withTabs = await Background.run { LiveProbe.pulseTabs(into: mem) }
-                if self.module == .pulse {
-                    pulse = withTabs
-                }
-            case .protect:
-                protectFindings = await Background.run { LiveProbe.protect() }
-            case .startup:
-                startupRows = await Background.run { LiveProbe.startup() }
-            default:
-                break
-            }
-            liveBusy = false
-        }
-    }
-
-    func toggleProtect(_ id: String) {
-        guard let i = protectFindings.firstIndex(where: { $0.id == id }) else { return }
-        guard protectFindings[i].kind != .advice else { return }
-        protectFindings[i].selected.toggle()
-    }
-
-    func toggleStartup(_ id: String) {
-        guard let i = startupRows.firstIndex(where: { $0.id == id }) else { return }
-        let row = startupRows[i]
-        guard !row.ours, !row.apple else { return }
-        startupRows[i].selected.toggle()
-    }
-
-    func cleanProtect() {
-        guard !liveBusy else { return }
-        liveBusy = true
-        let jobs = protectFindings.filter { $0.selected && $0.kind != .advice }
-        Task { @MainActor in
-            for finding in jobs {
-                let item = JunkItem(
-                    id: finding.id,
-                    module: .protect,
-                    title: finding.title,
-                    subtitle: finding.subtitle,
-                    url: finding.url ?? FileManager.default.homeDirectoryForCurrentUser,
-                    bytes: finding.bytes,
-                    selected: true,
-                    kind: finding.kind,
-                    keepsLogins: false
-                )
-                _ = await Background.run { Janitor.clean(item) }
-            }
-            protectFindings = await Background.run { LiveProbe.protect() }
-            liveBusy = false
-        }
-    }
-
-    func cleanStartup() {
-        guard !liveBusy else { return }
-        liveBusy = true
-        let jobs = startupRows.filter { $0.selected && !$0.ours && !$0.apple }
-        Task { @MainActor in
-            for row in jobs {
-                let item = JunkItem(
-                    id: row.id,
-                    module: .startup,
-                    title: Line.proper(row.name),
-                    subtitle: row.detail,
-                    url: row.url,
-                    bytes: 0,
-                    selected: true,
-                    kind: row.kind,
-                    keepsLogins: false
-                )
-                _ = await Background.run { Janitor.clean(item) }
-            }
-            startupRows = await Background.run { LiveProbe.startup() }
-            liveBusy = false
         }
     }
 }

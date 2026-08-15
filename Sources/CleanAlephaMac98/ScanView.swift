@@ -69,7 +69,15 @@ struct ScanView: View {
     }
 
     private var shownBytes: Int64 {
-        state.cleaning ? state.displayedBytes : state.selectedBytes
+        if state.cleaning { return state.displayedBytes }
+        if state.module == .pulse, let p = state.pulse { return p.used }
+        return state.selectedBytes
+    }
+
+    private var liveFootnote: String {
+        if state.module == .pulse { return Copy.ramHonest.t(lang) }
+        if state.module.isLiveModule { return state.module.blurb.t(lang) }
+        return Copy.loginsStay.t(lang)
     }
 
     var body: some View {
@@ -340,9 +348,9 @@ struct ScanView: View {
                             .foregroundStyle(C.secondary)
                             .contentTransition(.numericText())
                     }
-                    Text(Copy.loginsStay.t(lang))
+                    Text(liveFootnote)
                         .font(F.callout())
-                        .foregroundStyle(C.accentText)
+                        .foregroundStyle(state.module.isLiveModule ? C.secondary : C.accentText)
                     if state.cleaning {
                         ProgressCapsule(progress: state.progress)
                             .accessibilityLabel(Copy.progressClean.t(lang))
@@ -454,6 +462,8 @@ struct ScanView: View {
 
     private var emptyTitle: String {
         if justCleanedEmpty { return Copy.done.t(lang) }
+        if state.module == .protect { return Copy.protectClear.t(lang) }
+        if state.module == .pulse, let p = state.pulse { return p.pressure.title.t(lang) }
         if state.module == .smart { return Copy.foldersClean.t(lang) }
         return Copy.layerClean.t(lang)
     }
@@ -462,6 +472,7 @@ struct ScanView: View {
         if justCleanedEmpty {
             return Copy.emptyDetailFreed(state.lastFreed).t(lang)
         }
+        if state.module == .protect { return Copy.protectClearSub.t(lang) }
         if !state.hasFDA && state.module.suggestsFDA {
             return Copy.emptyFDA.t(lang)
         }
@@ -482,7 +493,7 @@ struct ResultCard: View {
 
     private var emptied: Bool { item.bytes <= 0 }
     private var muted: Bool { !emptied && item.isSecondaryRisk && !item.selected }
-    private var canToggle: Bool { enabled && !emptied }
+    private var canToggle: Bool { enabled && !emptied && item.kind != .advice }
 
     var body: some View {
         Button(action: toggle) {
@@ -538,12 +549,17 @@ struct ResultCard: View {
         .buttonStyle(CardPressStyle())
         .disabled(!canToggle)
         .contextMenu {
-            if FinderReveal.canShow(item.url) {
+            if item.id.hasPrefix("pulse-tab:") {
+                Button(Copy.showTab.t(lang)) {
+                    Task { await Background.run { LiveProbe.revealTab(item: item) } }
+                }
+            }
+            if FinderReveal.canShow(item.url), !item.module.isLiveModule {
                 Button(Copy.revealFinder.t(lang)) {
                     FinderReveal.show(item.url)
                 }
             }
-            if !emptied {
+            if !emptied, !item.module.isLiveModule {
                 Button(Copy.excludeThis.t(lang)) {
                     state.exclude(item)
                 }
