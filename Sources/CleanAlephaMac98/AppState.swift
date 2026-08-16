@@ -261,6 +261,31 @@ final class AppState {
             }
             pulseFocus = name
         }
+        if LiveProbe.isBrowserApp(name) {
+            Task { await ensureBrowserTabs(for: name) }
+        }
+    }
+
+    /// Drill into Chrome/Safari should show tab titles, not anonymous renderer rows.
+    private func ensureBrowserTabs(for name: String) async {
+        guard LiveProbe.isBrowserApp(name) else { return }
+        if hasTabs(forBrowser: name) { return }
+        guard let snap = pulse else { return }
+        let fresh = await Background.run { LiveProbe.pulseTabs(into: snap, only: [name]) }
+        guard module == .pulse else { return }
+        var merged = snap
+        let kept = snap.tabs.filter { $0.browser != name }
+        let added = fresh.tabs.filter { $0.browser == name }
+        merged.tabs = kept + added
+        if let note = fresh.tabAccess { merged.tabAccess = note }
+        pulse = merged
+        items.removeAll { $0.module == .pulse && $0.id.hasPrefix("pulse-tab:") && $0.id.hasSuffix(":\(name)") }
+        let tabSnap = merged
+        items.append(contentsOf: LiveProbe.junk(fromTabs: tabSnap).filter { $0.id.hasSuffix(":\(name)") })
+        if let note = merged.tabAccess, note == Copy.needAutomation, added.isEmpty {
+            lastFailureNote = note
+        }
+        CamLog.line("pulse ensure tabs \(name) count=\(added.count)")
     }
 
     func openPulseRam() {
@@ -344,10 +369,21 @@ final class AppState {
             return Array((apps + kids).sorted { pulseCpuScore($0) > pulseCpuScore($1) }.prefix(40))
         }
         return pulse.filter { item in
-            if item.id.hasPrefix("pulse-child:\(focus):") { return true }
+            if item.id.hasPrefix("pulse-child:\(focus):") {
+                // Real tab titles come from AppleScript; anonymous renderers are noise.
+                if hasTabs(forBrowser: focus), LiveProbe.isPageRendererChild(itemID: item.id) {
+                    return false
+                }
+                return true
+            }
             if item.id.hasPrefix("pulse-tab:"), item.id.hasSuffix(":\(focus)") { return true }
             return false
         }
+    }
+
+    private func hasTabs(forBrowser name: String) -> Bool {
+        if let pulse, pulse.tabs.contains(where: { $0.browser == name }) { return true }
+        return items.contains { $0.id.hasPrefix("pulse-tab:") && $0.id.hasSuffix(":\(name)") }
     }
 
     /// «Scan again» – back to the centered orb; user presses Scan themselves.

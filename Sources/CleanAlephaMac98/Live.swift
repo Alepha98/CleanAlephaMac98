@@ -269,6 +269,18 @@ enum LiveProbe {
         "Safari", "Google Chrome", "Microsoft Edge", "Brave Browser", "Chromium", "Yandex", "Arc", "Firefox"
     ]
 
+    static func isBrowserApp(_ name: String) -> Bool {
+        browserNames.contains(name)
+    }
+
+    /// Page/renderer helpers are anonymous in `ps` – hide them when real tab titles exist.
+    static func isPageRendererChild(itemID: String) -> Bool {
+        guard itemID.hasPrefix("pulse-child:") else { return false }
+        let parts = itemID.split(separator: ":", maxSplits: 3, omittingEmptySubsequences: false)
+        guard parts.count >= 4 else { return false }
+        return Copy.isPageRendererLabel(String(parts[3]))
+    }
+
     /// Focus tokens for RAM / CPU drill-downs (not app names).
     static let pulseFocusRAM = "__ram__"
     static let pulseFocusCPU = "__cpu__"
@@ -598,9 +610,21 @@ enum LiveProbe {
     }
 
     private static func helperLabel(from command: String, app: String) -> String {
+        let lower = command.lowercased()
+        if lower.contains("--type=renderer") { return "Renderer" }
+        if lower.contains("--type=gpu-process") || lower.contains("--type=gpu") { return "GPU" }
+        if lower.contains("--type=utility") {
+            if lower.contains("network") { return "Network" }
+            if lower.contains("storage") { return "Storage" }
+            if lower.contains("audio") { return "Audio" }
+            return "Utility"
+        }
+        if lower.contains("--type=extension") || lower.contains("--extension-process") {
+            return "Extension"
+        }
         if let range = command.range(of: ".app/Contents/") {
             let after = String(command[range.upperBound...])
-            let leaf = URL(fileURLWithPath: after).lastPathComponent
+            let leaf = URL(fileURLWithPath: after.split(separator: " ").first.map(String.init) ?? after).lastPathComponent
             if !leaf.isEmpty, leaf != app { return leaf }
         }
         if command.contains("com.apple.WebKit.WebContent") { return "WebContent" }
@@ -670,13 +694,20 @@ enum LiveProbe {
                 continue
             }
             let started = Date()
-            let result = runAppleScript(tabScript(for: spec.scriptName), seconds: 2)
+            let result = runAppleScript(tabScript(for: spec.scriptName), seconds: 6)
             let ms = Int(Date().timeIntervalSince(started) * 1000)
             if result.denied { denied = true }
             let parsed = parseTabs(result.output, browser: spec.scriptName)
+            if parsed.isEmpty, !result.output.isEmpty {
+                CamLog.line("pulse tabs \(spec.app) parse-miss bytes=\(result.output.utf8.count) sample=\(result.output.prefix(80).replacingOccurrences(of: "\t", with: "\\t"))")
+            }
             CamLog.line("pulse tabs \(spec.app) ms=\(ms) denied=\(result.denied) tabs=\(parsed.count)")
-            let rss = apps.first(where: { $0.name == spec.app })?.bytes ?? 0
-            let share = parsed.isEmpty ? 0 : rss / Int64(parsed.count)
+            let app = apps.first(where: { $0.name == spec.app })
+            let rendererRSS = app?.children
+                .filter { Copy.isPageRendererLabel($0.label) }
+                .reduce(Int64(0)) { $0 + $1.bytes } ?? 0
+            let pool = rendererRSS > 0 ? rendererRSS : (app?.bytes ?? 0)
+            let share = parsed.isEmpty ? 0 : max(pool / Int64(parsed.count), 1)
             for var tab in parsed {
                 tab.estimate = share
                 tabs.append(tab)
@@ -732,8 +763,13 @@ enum LiveProbe {
     }
 
     private static func tabScript(for app: String) -> String {
+        // Inside `tell application "Chrome/Safari"`, the bare token `tab` is the
+        // browser's tab class – stringifying it yields the literal "tab", not U+0009.
+        // Always use character id 9 / 10 for the delimiter.
         if app == "Safari" {
             return """
+            set sep to character id 9
+            set nl to character id 10
             if application "Safari" is running then
               tell application "Safari"
                 set out to ""
@@ -741,7 +777,7 @@ enum LiveProbe {
                 repeat with w in windows
                   set tabIndex to 1
                   repeat with t in tabs of w
-                    set out to out & (name of t) & tab & (URL of t) & tab & winIndex & tab & tabIndex & linefeed
+                    set out to out & (name of t) & sep & (URL of t) & sep & winIndex & sep & tabIndex & nl
                     set tabIndex to tabIndex + 1
                   end repeat
                   set winIndex to winIndex + 1
@@ -753,6 +789,8 @@ enum LiveProbe {
             """
         }
         return """
+        set sep to character id 9
+        set nl to character id 10
         if application "\(app)" is running then
           tell application "\(app)"
             set out to ""
@@ -760,7 +798,21 @@ enum LiveProbe {
             repeat with w in windows
               set tabIndex to 1
               repeat with t in tabs of w
-                set out to out & (title of t) & tab & (URL of t) & tab & winIndex & tab & tabIndex & linefeed
+                set pageTitle to ""
+                try
+                  set pageTitle to title of t
+                end try
+                if pageTitle is "" then
+                  try
+                    set pageTitle to name of t
+                  end try
+                end if
+                set pageURL to ""
+                try
+                  set pageURL to URL of t
+                end try
+                if pageTitle is "" then set pageTitle to pageURL
+                set out to out & pageTitle & sep & pageURL & sep & winIndex & sep & tabIndex & nl
                 set tabIndex to tabIndex + 1
               end repeat
               set winIndex to winIndex + 1
@@ -775,10 +827,24 @@ enum LiveProbe {
     private static func parseTabs(_ text: String, browser: String) -> [LiveTab] {
         var out: [LiveTab] = []
         for line in text.split(whereSeparator: \.isNewline) {
-            let cols = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-            guard cols.count >= 4, let win = Int(cols[2]), let idx = Int(cols[3]) else { continue }
-            let title = cols[0].isEmpty ? cols[1] : cols[0]
-            out.append(LiveTab(browser: browser, title: title, url: cols[1], estimate: 0, window: win, tabIndex: idx))
+            let raw = String(line)
+            guard !raw.isEmpty else { continue }
+            let cols = raw.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard cols.count >= 4, let win = Int(cols[cols.count - 2]), let idx = Int(cols[cols.count - 1]) else {
+                continue
+            }
+            // Title may itself contain tabs rarely – join the middle back if needed.
+            let title: String
+            let url: String
+            if cols.count == 4 {
+                title = cols[0].isEmpty ? cols[1] : cols[0]
+                url = cols[1]
+            } else {
+                url = cols[cols.count - 3]
+                let head = cols.dropLast(3).joined(separator: "\t")
+                title = head.isEmpty ? url : head
+            }
+            out.append(LiveTab(browser: browser, title: title, url: url, estimate: 0, window: win, tabIndex: idx))
         }
         return out
     }

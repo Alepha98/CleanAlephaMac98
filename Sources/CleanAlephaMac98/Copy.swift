@@ -339,10 +339,10 @@ enum Copy {
 
     static func humanHelperTitle(label: String, app: String) -> Line {
         let l = label.lowercased()
-        if l.contains("renderer") || l.contains("webcontent") || l.contains("webkit") {
+        if isPageRendererLabel(label) {
             return Line(
-                ru: "Процесс страницы / вкладки в «\(app)»",
-                en: "Page / tab process in “\(app)”"
+                ru: "Страница в «\(app)»",
+                en: "Page in “\(app)”"
             )
         }
         if l.contains("gpu") {
@@ -355,6 +355,24 @@ enum Copy {
             return Line(
                 ru: "Сетевой процесс в «\(app)»",
                 en: "Network process in “\(app)”"
+            )
+        }
+        if l.contains("storage") {
+            return Line(
+                ru: "Процесс хранилища в «\(app)»",
+                en: "Storage process in “\(app)”"
+            )
+        }
+        if l.contains("audio") {
+            return Line(
+                ru: "Аудиопроцесс в «\(app)»",
+                en: "Audio process in “\(app)”"
+            )
+        }
+        if l.contains("utility") {
+            return Line(
+                ru: "Служебный процесс в «\(app)»",
+                en: "Utility process in “\(app)”"
             )
         }
         if l.contains("plugin") || l.contains("extension") {
@@ -381,17 +399,29 @@ enum Copy {
         )
     }
 
+    /// Chromium / WebKit content processes – real tab titles come from AppleScript.
+    static func isPageRendererLabel(_ label: String) -> Bool {
+        let l = label.lowercased()
+        return l.contains("renderer")
+            || l.contains("webcontent")
+            || l.contains("webkit.webcontent")
+    }
+
     static func humanTabTitle(browser: String, page: String) -> Line {
-        Line(
-            ru: "Вкладка в «\(browser)»: \(page)",
-            en: "Tab in “\(browser)”: \(page)"
-        )
+        _ = browser
+        let trimmed = page.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = trimmed.isEmpty ? "—" : String(trimmed.prefix(96))
+        return Line(ru: title, en: title)
     }
 
     static func humanTabSubtitle(browser: String, host: String) -> Line {
-        Line(
-            ru: "\(host) · \(browser)",
-            en: "\(host) · \(browser)"
+        let h = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if h.isEmpty {
+            return Line(ru: "Вкладка · \(browser)", en: "Tab · \(browser)")
+        }
+        return Line(
+            ru: "Вкладка · \(h) · \(browser)",
+            en: "Tab · \(h) · \(browser)"
         )
     }
 
