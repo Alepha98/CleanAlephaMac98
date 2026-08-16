@@ -267,6 +267,66 @@ enum Copy {
     static let cpuNormal = Line(ru: "CPU спокойный", en: "CPU is calm")
     static let cpuWarn = Line(ru: "CPU загружен", en: "CPU is busy")
     static let cpuCritical = Line(ru: "CPU на пределе", en: "CPU is maxed")
+    static let tapForBreakdown = Line(ru: "Тап – из чего это состоит", en: "Tap to see what makes this up")
+    static let memWired = Line(ru: "Wired – занято ядром", en: "Wired – held by the kernel")
+    static let memWiredHint = Line(
+        ru: "Память, которую macOS не выгрузит на диск. Драйверы, ядро, защищённые буферы.",
+        en: "Memory macOS won't page out. Drivers, kernel, locked buffers."
+    )
+    static let memCompressed = Line(ru: "Сжатая память", en: "Compressed memory")
+    static let memCompressedHint = Line(
+        ru: "macOS сжал редко нужные страницы в RAM, чтобы не уходить в своп сразу.",
+        en: "macOS compressed cold pages in RAM so it doesn't hit swap right away."
+    )
+    static let memSwap = Line(ru: "Своп на диске", en: "Swap on disk")
+    static let memSwapHint = Line(
+        ru: "Уже выгружено на SSD. Mac тормозит, пока это читается обратно.",
+        en: "Already paged to SSD. The Mac stutters while this is read back."
+    )
+    static let pulseRamFocus = Line(ru: "Состав памяти", en: "Memory breakdown")
+    static let pulseCpuFocus = Line(ru: "Кто жрёт CPU", en: "What's eating CPU")
+
+    static func systemProcTitle(_ name: String) -> String? {
+        switch name {
+        case "kernel_task": return "kernel_task (ядро macOS)"
+        case "WindowServer": return "WindowServer (окна и графика)"
+        default: return nil
+        }
+    }
+
+    static func systemProcHint(_ name: String) -> Line? {
+        switch name {
+        case "kernel_task":
+            return Line(
+                ru: "Не программа. Ядро + драйверы + I/O. Убить нельзя – смотри wired/своп.",
+                en: "Not an app. Kernel + drivers + I/O. Can't quit – check wired/swap."
+            )
+        case "WindowServer":
+            return Line(
+                ru: "Рисует окна, меню, анимации. Растёт от мониторов, HDR, тяжёлого UI.",
+                en: "Draws windows, menus, animation. Grows with displays, HDR, heavy UI."
+            )
+        default:
+            return nil
+        }
+    }
+
+    static func helperRoleHint(_ label: String) -> Line? {
+        let l = label.lowercased()
+        if l.contains("renderer") || l.contains("webcontent") {
+            return Line(ru: "Процесс страницы / вкладки", en: "Page / tab process")
+        }
+        if l.contains("gpu") {
+            return Line(ru: "Отрисовка и GPU", en: "Compositing / GPU")
+        }
+        if l.contains("network") {
+            return Line(ru: "Сетевой хелпер", en: "Network helper")
+        }
+        if l.contains("helper") {
+            return Line(ru: "Фоновый хелпер приложения", en: "Background app helper")
+        }
+        return nil
+    }
 
     static func cpuLine(busy: Double, load: Double) -> Line {
         Line(

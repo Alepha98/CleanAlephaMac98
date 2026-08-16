@@ -170,9 +170,71 @@ final class AppState {
         }
     }
 
+    func openPulseRam() {
+        openPulseApp(LiveProbe.pulseFocusRAM)
+    }
+
+    func openPulseCpu() {
+        openPulseApp(LiveProbe.pulseFocusCPU)
+    }
+
     func closePulseFocus() {
         withAnimation(Motion.springUI) {
             pulseFocus = nil
+        }
+    }
+
+    var pulseFocusTitle: String {
+        guard let focus = pulseFocus else { return "" }
+        if focus == LiveProbe.pulseFocusRAM { return Copy.pulseRamFocus.t(copyLang) }
+        if focus == LiveProbe.pulseFocusCPU { return Copy.pulseCpuFocus.t(copyLang) }
+        return Copy.systemProcTitle(focus) ?? focus
+    }
+
+    private func pulseCpuScore(_ item: JunkItem) -> Double {
+        guard let snap = pulse else { return 0 }
+        if item.id.hasPrefix("pulse-app-") {
+            let name = String(item.id.dropFirst("pulse-app-".count))
+            return snap.apps.first { $0.name == name }?.cpu ?? 0
+        }
+        if item.id.hasPrefix("pulse-child:") {
+            let parts = item.id.split(separator: ":", maxSplits: 3, omittingEmptySubsequences: false)
+            // pulse-child:app:pid:label
+            if parts.count >= 3, let pid = Int32(parts[2]),
+               let app = snap.apps.first(where: { $0.name == String(parts[1]) }) {
+                return app.children.first { $0.pid == pid }?.cpu ?? 0
+            }
+        }
+        return 0
+    }
+
+    private func pulseVisible(from pool: [JunkItem]) -> [JunkItem] {
+        let pulse = pool.filter { $0.module == .pulse }
+        guard let focus = pulseFocus else {
+            return pulse.filter {
+                $0.id == "pulse-ram" || $0.id == "pulse-cpu" || $0.id.hasPrefix("pulse-app-")
+            }
+        }
+        if focus == LiveProbe.pulseFocusRAM {
+            let parts = pulse.filter { $0.id.hasPrefix("pulse-part:") }
+            let apps = pulse.filter { $0.id.hasPrefix("pulse-app-") }
+                .sorted { $0.bytes > $1.bytes }
+            return parts.sorted { $0.bytes > $1.bytes } + apps
+        }
+        if focus == LiveProbe.pulseFocusCPU {
+            // Hot apps + helpers by CPU% – even when RAM is tiny.
+            let apps = pulse.filter {
+                $0.id.hasPrefix("pulse-app-") && pulseCpuScore($0) >= 0.5
+            }
+            let kids = pulse.filter {
+                $0.id.hasPrefix("pulse-child:") && pulseCpuScore($0) >= 1.0
+            }
+            return Array((apps + kids).sorted { pulseCpuScore($0) > pulseCpuScore($1) }.prefix(40))
+        }
+        return pulse.filter { item in
+            if item.id.hasPrefix("pulse-child:\(focus):") { return true }
+            if item.id.hasPrefix("pulse-tab:"), item.id.hasSuffix(":\(focus)") { return true }
+            return false
         }
     }
 
@@ -216,23 +278,16 @@ final class AppState {
         } else {
             scoped = pool.filter { $0.module == module }
         }
+        // CPU drill already sorted by CPU; don't re-sort by bytes.
+        if module == .pulse, pulseFocus == LiveProbe.pulseFocusCPU {
+            return scoped
+        }
+        if module == .pulse, pulseFocus == LiveProbe.pulseFocusRAM {
+            return scoped
+        }
         return scoped.sorted {
             if $0.bytes != $1.bytes { return $0.bytes > $1.bytes }
             return $0.title.ru.localizedStandardCompare($1.title.ru) == .orderedAscending
-        }
-    }
-
-    private func pulseVisible(from pool: [JunkItem]) -> [JunkItem] {
-        let pulse = pool.filter { $0.module == .pulse }
-        guard let focus = pulseFocus else {
-            return pulse.filter {
-                $0.id == "pulse-ram" || $0.id == "pulse-cpu" || $0.id.hasPrefix("pulse-app-")
-            }
-        }
-        return pulse.filter { item in
-            if item.id.hasPrefix("pulse-child:\(focus):") { return true }
-            if item.id.hasPrefix("pulse-tab:"), item.id.hasSuffix(":\(focus)") { return true }
-            return false
         }
     }
 

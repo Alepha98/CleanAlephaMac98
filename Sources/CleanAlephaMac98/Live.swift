@@ -159,6 +159,14 @@ enum LiveProbe {
             let swap = Copy.swapLine(snap.swap)
             ramSub = Line(ru: "\(ramSub.ru). \(swap.ru)", en: "\(ramSub.en). \(swap.en)")
         }
+        ramSub = Line(
+            ru: "\(ramSub.ru). \(Copy.tapForBreakdown.ru)",
+            en: "\(ramSub.en). \(Copy.tapForBreakdown.en)"
+        )
+        let cpuSub = Line(
+            ru: "\(Copy.cpuLine(busy: snap.cpuBusy, load: snap.loadAvg).ru). \(Copy.tapForBreakdown.ru)",
+            en: "\(Copy.cpuLine(busy: snap.cpuBusy, load: snap.loadAvg).en). \(Copy.tapForBreakdown.en)"
+        )
         var rows: [JunkItem] = [
             JunkItem(
                 id: "pulse-ram",
@@ -175,38 +183,93 @@ enum LiveProbe {
                 id: "pulse-cpu",
                 module: .pulse,
                 title: snap.cpuPressure.cpuTitle,
-                subtitle: Copy.cpuLine(busy: snap.cpuBusy, load: snap.loadAvg),
+                subtitle: cpuSub,
                 url: home,
                 bytes: max(Int64(snap.cpuBusy * 1_000_000), 1),
                 selected: false,
                 kind: .advice,
                 keepsLogins: false
+            ),
+            // RAM composition – visible inside «Уже своп» / memory drill.
+            JunkItem(
+                id: "pulse-part:wired",
+                module: .pulse,
+                title: Copy.memWired,
+                subtitle: Copy.memWiredHint,
+                url: home,
+                bytes: max(snap.wired, 1),
+                selected: false,
+                kind: .advice,
+                keepsLogins: false
+            ),
+            JunkItem(
+                id: "pulse-part:compressed",
+                module: .pulse,
+                title: Copy.memCompressed,
+                subtitle: Copy.memCompressedHint,
+                url: home,
+                bytes: max(snap.compressed, 1),
+                selected: false,
+                kind: .advice,
+                keepsLogins: false
+            ),
+            JunkItem(
+                id: "pulse-part:swap",
+                module: .pulse,
+                title: Copy.memSwap,
+                subtitle: Copy.memSwapHint,
+                url: home,
+                bytes: snap.swap,
+                selected: false,
+                kind: .advice,
+                keepsLogins: false
             )
         ]
-        for app in snap.apps.prefix(16) {
+        // Overview: merge top RAM + top CPU so a hot CPU with little RAM still shows.
+        let byRam = snap.apps.sorted { $0.bytes > $1.bytes }
+        let byCpu = snap.apps.sorted { $0.cpu > $1.cpu }
+        var overview: [LiveApp] = []
+        var seen = Set<String>()
+        for app in byRam.prefix(14) + byCpu.prefix(14) {
+            if seen.insert(app.name).inserted { overview.append(app) }
+        }
+        for app in overview.prefix(20) {
             let tabHint = browserNames.contains(app.name)
+            let sys = Copy.systemProcHint(app.name)
+            let base = Copy.appPerfHint(
+                ram: app.bytes,
+                cpu: app.cpu,
+                parts: app.children.count,
+                browser: tabHint
+            )
+            let sub: Line
+            if let sys {
+                sub = Line(ru: "\(base.ru) \(sys.ru)", en: "\(base.en) \(sys.en)")
+            } else {
+                sub = base
+            }
             rows.append(JunkItem(
                 id: "pulse-app-\(app.name)",
                 module: .pulse,
-                title: Line.proper(app.name),
-                subtitle: Copy.appPerfHint(
-                    ram: app.bytes,
-                    cpu: app.cpu,
-                    parts: app.children.count,
-                    browser: tabHint
-                ),
+                title: Line.proper(Copy.systemProcTitle(app.name) ?? app.name),
+                subtitle: sub,
                 url: home,
                 bytes: max(app.bytes, 1),
                 selected: false,
                 kind: .advice,
                 keepsLogins: false
             ))
-            for child in app.children.prefix(20) {
+            for child in app.children.prefix(24) {
+                let childTitle = friendlyHelperTitle(child.label, app: app.name)
+                var childSub = Copy.procPerfHint(ram: child.bytes, cpu: child.cpu, pid: child.pid)
+                if let role = Copy.helperRoleHint(child.label) {
+                    childSub = Line(ru: "\(role.ru). \(childSub.ru)", en: "\(role.en). \(childSub.en)")
+                }
                 rows.append(JunkItem(
                     id: "pulse-child:\(app.name):\(child.pid):\(child.label)",
                     module: .pulse,
-                    title: Line.proper(child.label),
-                    subtitle: Copy.procPerfHint(ram: child.bytes, cpu: child.cpu, pid: child.pid),
+                    title: Line.proper(childTitle),
+                    subtitle: childSub,
                     url: home,
                     bytes: max(child.bytes, 1),
                     selected: false,
@@ -215,13 +278,28 @@ enum LiveProbe {
                 ))
             }
         }
-        CamLog.line("pulse junk apps=\(snap.apps.prefix(16).count) used=\(snap.used) cpu=\(Int(snap.cpuBusy))")
+        CamLog.line("pulse junk overview=\(overview.prefix(20).count) used=\(snap.used) cpu=\(Int(snap.cpuBusy))")
         return rows
+    }
+
+    private static func friendlyHelperTitle(_ label: String, app: String) -> String {
+        let l = label.lowercased()
+        if l.contains("renderer") || l.contains("webcontent") { return "\(app) · renderer / страница" }
+        if l.contains("gpu") { return "\(app) · GPU" }
+        if l.contains("network") { return "\(app) · сеть" }
+        if l.contains("plugin") { return "\(app) · plugin" }
+        if l.contains("helper") { return "\(app) · helper" }
+        if label == app { return app }
+        return "\(app) · \(label)"
     }
 
     private static let browserNames: Set<String> = [
         "Safari", "Google Chrome", "Microsoft Edge", "Brave Browser", "Chromium", "Yandex", "Arc", "Firefox"
     ]
+
+    /// Focus tokens for RAM / CPU drill-downs (not app names).
+    static let pulseFocusRAM = "__ram__"
+    static let pulseFocusCPU = "__cpu__"
 
     static func junk(fromTabs snap: PulseSnapshot) -> [JunkItem] {
         snap.tabs.map { tab in
@@ -511,10 +589,10 @@ enum LiveProbe {
                 }
                 return LiveApp(name: key, bytes: acc.bytes, cpu: acc.cpu, pids: acc.pids, children: kids)
             }
-            .filter { $0.bytes >= 12_000_000 || $0.cpu >= 8 }
+            .filter { $0.bytes >= 8_000_000 || $0.cpu >= 2.5 }
             .sorted {
-                let sa = $0.bytes + Int64($0.cpu * 8_000_000)
-                let sb = $1.bytes + Int64($1.cpu * 8_000_000)
+                let sa = $0.bytes + Int64($0.cpu * 12_000_000)
+                let sb = $1.bytes + Int64($1.cpu * 12_000_000)
                 return sa > sb
             }
     }
@@ -525,13 +603,17 @@ enum LiveProbe {
             let leaf = URL(fileURLWithPath: after).lastPathComponent
             if !leaf.isEmpty, leaf != app { return leaf }
         }
+        if command.contains("com.apple.WebKit.WebContent") { return "WebContent" }
+        if command.contains("com.apple.WebKit.GPU") { return "GPU" }
+        if command.contains("com.apple.WebKit.Networking") { return "Networking" }
         let base = URL(fileURLWithPath: command.split(separator: " ").first.map(String.init) ?? command).lastPathComponent
         return base.isEmpty ? app : base
     }
 
     private static func shouldIgnore(_ command: String) -> Bool {
+        // Keep kernel_task / WindowServer – user wants to see what they are.
         let skip = [
-            "kernel_task", "launchd", "WindowServer", "loginwindow",
+            "launchd", "loginwindow",
             "syspolicyd", "runningboardd", "logd", "cfprefsd",
             "CleanAlephaMac98", "chrome_crashpad", "SafariWidgetExt"
         ]
@@ -539,6 +621,8 @@ enum LiveProbe {
     }
 
     private static func appName(from command: String) -> String {
+        if command.contains("kernel_task") { return "kernel_task" }
+        if command.contains("WindowServer") { return "WindowServer" }
         let map: [(String, String)] = [
             ("Google Chrome", "Google Chrome"),
             ("Microsoft Edge", "Microsoft Edge"),

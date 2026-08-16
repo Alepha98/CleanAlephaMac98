@@ -121,7 +121,8 @@ struct JunkItem: Identifiable, Equatable, Sendable {
     }
 
     var cautionBadge: Line? {
-        if module == .pulse, id == "pulse-ram" || id == "pulse-cpu" { return nil }
+        if module == .pulse, id == "pulse-ram" || id == "pulse-cpu" { return Copy.drillBadge }
+        if module == .pulse, id.hasPrefix("pulse-part:") { return nil }
         if module == .pulse, kind == .closeTab { return Copy.tabCloseBadge }
         if module == .pulse, id.hasPrefix("pulse-app-") { return Copy.drillBadge }
         if module == .pulse, id.hasPrefix("pulse-child:") { return Copy.recommendBadge }

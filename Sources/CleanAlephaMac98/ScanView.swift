@@ -435,7 +435,7 @@ struct ScanView: View {
                     .accessibilityElement()
                     .accessibilityLabel(orbLabel)
                 VStack(alignment: .leading, spacing: 6) {
-                    if state.module == .pulse, let focus = state.pulseFocus {
+                    if state.module == .pulse, state.pulseFocus != nil {
                         Button(action: state.closePulseFocus) {
                             HStack(spacing: 4) {
                                 Text("‹")
@@ -445,7 +445,7 @@ struct ScanView: View {
                             .foregroundStyle(C.accentText)
                         }
                         .buttonStyle(.plain)
-                        Text(focus)
+                        Text(state.pulseFocusTitle)
                             .font(F.callout())
                             .foregroundStyle(C.secondary)
                             .contentTransition(.opacity)
@@ -688,7 +688,41 @@ struct ResultCard: View {
     private var emptied: Bool { item.bytes <= 0 }
     private var muted: Bool { !emptied && item.isSecondaryRisk && !item.selected }
     private var canToggle: Bool { enabled && !emptied && item.kind != .advice }
-    private var canDrill: Bool { enabled && !emptied && item.id.hasPrefix("pulse-app-") }
+    private var canDrill: Bool {
+        enabled && !emptied && (
+            item.id.hasPrefix("pulse-app-")
+                || item.id == "pulse-ram"
+                || item.id == "pulse-cpu"
+        )
+    }
+
+    private var sizeLabel: String {
+        if emptied { return Copy.emptied.t(lang) }
+        if item.id == "pulse-cpu" {
+            if let busy = state.pulse?.cpuBusy { return "\(Int(busy))%" }
+        }
+        if state.pulseFocus == LiveProbe.pulseFocusCPU {
+            if let cpu = cpuPercentForItem() {
+                return String(format: "%.0f%%", cpu)
+            }
+        }
+        return ByteFormat.string(item.bytes, lang)
+    }
+
+    private func cpuPercentForItem() -> Double? {
+        guard let snap = state.pulse else { return nil }
+        if item.id.hasPrefix("pulse-app-") {
+            let name = String(item.id.dropFirst("pulse-app-".count))
+            return snap.apps.first { $0.name == name }?.cpu
+        }
+        if item.id.hasPrefix("pulse-child:") {
+            let parts = item.id.split(separator: ":", maxSplits: 3, omittingEmptySubsequences: false)
+            guard parts.count >= 3, let pid = Int32(parts[2]) else { return nil }
+            let appName = String(parts[1])
+            return snap.apps.first { $0.name == appName }?.children.first { $0.pid == pid }?.cpu
+        }
+        return nil
+    }
 
     var body: some View {
         Button(action: cardAction) {
@@ -702,7 +736,7 @@ struct ResultCard: View {
                     }
                     .frame(width: 28, height: 28)
                     Spacer()
-                    Text(emptied ? Copy.emptied.t(lang) : ByteFormat.string(item.bytes, lang))
+                    Text(sizeLabel)
                         .font(F.size())
                         .foregroundStyle(C.secondary)
                 }
@@ -788,7 +822,11 @@ struct ResultCard: View {
     }
 
     private func cardAction() {
-        if canDrill {
+        if item.id == "pulse-ram" {
+            state.openPulseRam()
+        } else if item.id == "pulse-cpu" {
+            state.openPulseCpu()
+        } else if canDrill, item.id.hasPrefix("pulse-app-") {
             let name = String(item.id.dropFirst("pulse-app-".count))
             state.openPulseApp(name)
         } else if canToggle {
