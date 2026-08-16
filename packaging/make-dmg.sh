@@ -8,90 +8,136 @@ APP="$ROOT/dist/CleanAlephaMac98.app"
 STAGE="$ROOT/dist/dmg-root"
 VOL="CleanAlephaMac98"
 DMG="$ROOT/dist/CleanAlephaMac98.dmg"
-RW="$ROOT/dist/.rw.dmg"
-BG_SRC="$ROOT/packaging/dmg-background.png"
-BG_TIFF="$ROOT/packaging/dmg-background.tiff"
+RW="$ROOT/dist/.rw-dmg.dmg"
+BG="$ROOT/packaging/dmg-background.png"
 DS_STORE="$ROOT/packaging/dmg-DS_Store"
 
-# Window is 660×400 pt. Retina needs 1320×800 px; classic needs 660×400 px.
-# TIFF with both @72dpi is the reliable Finder background format.
-prepare_background() {
-  local one="$ROOT/dist/.dmg-bg-1x.png"
-  local two="$ROOT/dist/.dmg-bg-2x.png"
-  mkdir -p "$ROOT/dist"
-  sips -z 400 660 "$BG_SRC" --out "$one" >/dev/null
-  sips -z 800 1320 "$BG_SRC" --out "$two" >/dev/null
-  sips -s dpiWidth 72 -s dpiHeight 72 "$one" >/dev/null
-  sips -s dpiWidth 72 -s dpiHeight 72 "$two" >/dev/null
-  tiffutil -cathidpicheck "$one" "$two" -out "$BG_TIFF"
-  rm -f "$one" "$two"
-}
-
 zsh "$ROOT/packaging/make-app.sh" "$APP"
-prepare_background
+
+# 1320×800 @ 72dpi ⇒ full-size window (144dpi half-size clipped Applications).
+sips -s dpiWidth 72 -s dpiHeight 72 "$BG" >/dev/null
 
 rm -rf "$STAGE" "$DMG" "$RW"
-mkdir -p "$STAGE"
+mkdir -p "$STAGE/.background"
 ditto "$APP" "$STAGE/CleanAlephaMac98.app"
-ln -s /Applications "$STAGE/Applications"
+ln -sf /Applications "$STAGE/Applications"
+cp "$BG" "$STAGE/.background/background.png"
+cp "$APP/Contents/Resources/AppIcon.icns" "$STAGE/.VolumeIcon.icns"
 
-# Sized RW image, then decorate Finder view.
-SIZE_MB="$(du -sm "$STAGE" | awk '{print int($1) + 40}')"
-hdiutil create -volname "$VOL" -srcfolder "$STAGE" -ov -format UDRW -size "${SIZE_MB}m" "$RW" >/dev/null
+SIZE_MB="$(du -sm "$STAGE" | awk '{print int($1) + 50}')"
 
-MOUNT="$(hdiutil attach -readwrite -noverify -noautoopen "$RW" | awk '/\/Volumes\//{print $NF; exit}')"
-[[ -n "${MOUNT:-}" && -d "$MOUNT" ]]
-
-# Volume icon
-if [[ -f "$APP/Contents/Resources/AppIcon.icns" ]]; then
-  cp "$APP/Contents/Resources/AppIcon.icns" "$MOUNT/.VolumeIcon.icns"
-  SetFile -a C "$MOUNT" 2>/dev/null || true
-fi
-
-mkdir -p "$MOUNT/.background"
-cp "$BG_TIFF" "$MOUNT/.background/background.tiff"
-# Hide clutter
-SetFile -a V "$MOUNT/.background" 2>/dev/null || true
-
-# Prefer a checked-in .DS_Store (works on CI without Finder automation).
-if [[ -f "$DS_STORE" ]]; then
-  cp "$DS_STORE" "$MOUNT/.DS_Store"
-  SetFile -a V "$MOUNT/.DS_Store" 2>/dev/null || true
+# Prefer Finder styling locally. On CI (no reliable Finder automation) reuse a
+# checked-in .DS_Store captured from a good local build.
+if [[ "${CI:-}" == "true" || "${CAM98_DMG_USE_TEMPLATE:-}" == "1" ]]; then
+  if [[ ! -f "$DS_STORE" ]]; then
+    echo "missing $DS_STORE for CI template build" >&2
+    exit 1
+  fi
+  cp "$DS_STORE" "$STAGE/.DS_Store"
+  hdiutil create \
+    -volname "$VOL" \
+    -srcfolder "$STAGE" \
+    -ov \
+    -fs HFS+ \
+    -format UDZO \
+    -imagekey zlib-level=9 \
+    -size "${SIZE_MB}m" \
+    "$DMG" >/dev/null
 else
-  # Local GUI path: ask Finder to style the window, then we can refresh the template.
-  osascript <<EOF || true
+  hdiutil create \
+    -volname "$VOL" \
+    -srcfolder "$STAGE" \
+    -ov \
+    -fs HFS+ \
+    -format UDRW \
+    -size "${SIZE_MB}m" \
+    "$RW" >/dev/null
+
+  MOUNT="$(hdiutil attach -readwrite -noverify -noautoopen "$RW" | awk '/\/Volumes\//{print $NF; exit}')"
+  [[ -n "${MOUNT:-}" && -d "$MOUNT" ]]
+
+  SetFile -a C "$MOUNT" 2>/dev/null || true
+  SetFile -a V "$MOUNT/.background" 2>/dev/null || true
+
+  # macOS 15+/26: relative "file of folder of disk" often fails (-10006).
+  # POSIX path works. Window matches art 1:1 at 72dpi so nothing is clipped.
+  osascript <<EOF
 tell application "Finder"
+  activate
   tell disk "$VOL"
     open
+    delay 1
     set current view of container window to icon view
     set toolbar visible of container window to false
     set statusbar visible of container window to false
-    set the bounds of container window to {200, 120, 860, 520}
-    set viewOptions to the icon view options of container window
-    set arrangement of viewOptions to not arranged
-    set icon size of viewOptions to 128
-    set background picture of viewOptions to file ".background:background.tiff"
-    set position of item "CleanAlephaMac98.app" of container window to {165, 155}
-    set position of item "Applications" of container window to {495, 155}
+    set bounds of container window to {100, 80, 1420, 880}
+    delay 0.3
+    set opts to icon view options of container window
+    set arrangement of opts to not arranged
+    set icon size of opts to 128
+    try
+      set text size of opts to 14
+    end try
+    set background picture of opts to POSIX file "$MOUNT/.background/background.png"
+    delay 0.5
+    set position of item "CleanAlephaMac98.app" of container window to {340, 350}
+    set position of item "Applications" of container window to {980, 350}
+    delay 0.5
+    close
+    open
+    delay 1
+    set icon size of icon view options of container window to 128
+    set bounds of container window to {100, 80, 1420, 880}
+    set position of item "CleanAlephaMac98.app" of container window to {340, 350}
+    set position of item "Applications" of container window to {980, 350}
     update without registering applications
     delay 2
     close
   end tell
 end tell
 EOF
-  sleep 2
-  if [[ -f "$MOUNT/.DS_Store" ]]; then
-    cp "$MOUNT/.DS_Store" "$DS_STORE"
-    echo "wrote packaging/dmg-DS_Store from Finder"
-  fi
-fi
 
-sync
-hdiutil detach "$MOUNT" >/dev/null
-# Wait for detach to settle
-sleep 1
-hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -ov -o "$DMG" >/dev/null
-rm -f "$RW"
+  VERIFY="$(osascript <<EOF
+tell application "Finder"
+  tell disk "$VOL"
+    open
+    delay 1
+    set w to container window
+    set b to bounds of w
+    set wW to (item 3 of b) - (item 1 of b)
+    set wH to (item 4 of b) - (item 2 of b)
+    set icn to icon size of icon view options of w
+    try
+      set background picture of icon view options of w to POSIX file "$MOUNT/.background/background.png"
+      set ok to "bg-ok"
+    on error e
+      set ok to "bg-fail:" & e
+    end try
+    try
+      set n to count of items
+    on error
+      set n to -1
+    end try
+    close
+    return "size=" & wW & "x" & wH & " icons=" & icn & " items=" & n & " " & ok
+  end tell
+end tell
+EOF
+)"
+  echo "verify: $VERIFY"
+  echo "$VERIFY" | grep -q 'size=1320x800' || { echo "bad window size" >&2; exit 1; }
+  echo "$VERIFY" | grep -q 'icons=128' || { echo "bad icon size" >&2; exit 1; }
+  echo "$VERIFY" | grep -q 'bg-ok' || { echo "background not applied" >&2; exit 1; }
+  test -f "$MOUNT/.DS_Store"
+  cp "$MOUNT/.DS_Store" "$DS_STORE"
+
+  sync
+  hdiutil detach "$MOUNT" >/dev/null
+  sleep 1
+  hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -ov -o "$DMG" >/dev/null
+  rm -f "$RW"
+fi
 
 echo "dmg $DMG ($VERSION)"
 ls -lh "$DMG"
+test -f "$DMG"

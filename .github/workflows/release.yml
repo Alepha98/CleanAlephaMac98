@@ -22,7 +22,26 @@ jobs:
           xcode-version: latest-stable
 
       - name: Build DMG
+        env:
+          CAM98_DMG_USE_TEMPLATE: "1"
         run: zsh packaging/make-dmg.sh
+
+      - name: Verify DMG contents
+        run: |
+          set -euo pipefail
+          DMG=dist/CleanAlephaMac98.dmg
+          test -f "$DMG"
+          MOUNT="$(hdiutil attach -readonly -nobrowse "$DMG" | awk '/\/Volumes\//{print $NF; exit}')"
+          test -d "$MOUNT/CleanAlephaMac98.app/Contents/MacOS"
+          test -e "$MOUNT/Applications"
+          test -f "$MOUNT/.background/background.png"
+          test -f "$MOUNT/.DS_Store"
+          # Captured Finder templates are a few KB; tiny files mean aesthetics never stuck.
+          DS_SIZE="$(wc -c < "$MOUNT/.DS_Store" | tr -d ' ')"
+          test "$DS_SIZE" -ge 5000
+          ls -la "$MOUNT"
+          ls -la "$MOUNT/.background"
+          hdiutil detach "$MOUNT" >/dev/null
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
