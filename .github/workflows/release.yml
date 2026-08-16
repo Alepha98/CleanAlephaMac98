@@ -21,9 +21,6 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Install create-dmg
-        run: brew install create-dmg
-
       - name: Build DMG
         run: zsh packaging/make-dmg.sh
 
@@ -40,6 +37,7 @@ jobs:
           files: dist/CleanAlephaMac98.dmg
           generate_release_notes: true
           fail_on_unmatched_files: true
+          make_latest: true
           body: |
             Скачай **CleanAlephaMac98.dmg**, перетащи в Applications.
             Первый запуск: правый клик → **Открыть**.

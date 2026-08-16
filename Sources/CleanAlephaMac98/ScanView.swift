@@ -1122,6 +1122,9 @@ struct ResultCard: View {
                 Button(Copy.excludeThis.t(lang)) {
                     state.exclude(item)
                 }
+                Button(Copy.dismissForever.t(lang)) {
+                    state.dismissSuggestion(item)
+                }
             }
         }
         .accessibilityLabel("\(item.title.t(lang)), \(emptied ? Copy.emptied.t(lang) : ByteFormat.string(item.bytes, lang))")
@@ -1172,6 +1175,8 @@ struct SpaceView: View {
     @State private var refreshTick = 0
     @State private var usedFrac: CGFloat = 0
     @State private var reservedFrac: CGFloat = 0
+    @State private var lensRows: [(name: String, bytes: Int64, url: URL)] = []
+    @State private var lensBusy = false
 
     private var vol: (total: Int64, used: Int64, free: Int64) {
         let _ = refreshTick
@@ -1244,6 +1249,8 @@ struct SpaceView: View {
                 .onAppear { revealRing() }
                 .onChange(of: vol.used) { _, _ in syncRing(animated: state.didRevealDiskBar) }
                 .onChange(of: state.protectedBytes) { _, _ in syncRing(animated: true) }
+
+                spaceLensCard
             }
 
             ProtectedList()
@@ -1254,7 +1261,57 @@ struct SpaceView: View {
             }
             .scrollContentBackground(.hidden)
         }
-        .onAppear { state.requestProtectedMeasure() }
+        .onAppear {
+            state.requestProtectedMeasure()
+            refreshLens()
+        }
+    }
+
+    private var spaceLensCard: some View {
+        VStack(alignment: .leading, spacing: S.sm) {
+            Text(Copy.spaceLensTitle.t(lang))
+                .font(F.title())
+            Text(Copy.spaceLensLead.t(lang))
+                .font(F.callout())
+                .foregroundStyle(C.secondary)
+            if lensBusy && lensRows.isEmpty {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            ForEach(lensRows, id: \.url.path) { row in
+                Button {
+                    FinderReveal.show(row.url)
+                } label: {
+                    HStack {
+                        Text(row.name)
+                            .font(F.body())
+                            .foregroundStyle(C.ink)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(ByteFormat.string(row.bytes, lang))
+                            .font(F.size())
+                            .foregroundStyle(C.secondary)
+                    }
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(S.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(CardBackground())
+    }
+
+    private func refreshLens() {
+        lensBusy = true
+        Task {
+            let rows = await Background.run { DeepScan.spaceLensRows() }
+            await MainActor.run {
+                lensRows = rows
+                lensBusy = false
+            }
+        }
     }
 
     private func diskRing(size: CGFloat) -> some View {

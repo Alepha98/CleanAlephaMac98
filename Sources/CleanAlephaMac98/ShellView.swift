@@ -184,7 +184,7 @@ struct SidebarView: View {
     private var groups: [(String, [Module])] {
         [
             (Copy.scanGroup.t(lang), [.smart]),
-            (Copy.cleanGroup.t(lang), [.junk, .mail, .trash, .leftovers, .large, .duplicates, .browsers, .dev, .messengers]),
+            (Copy.cleanGroup.t(lang), [.junk, .mail, .trash, .leftovers, .large, .duplicates, .browsers, .dev, .messengers, .privacy]),
             (Copy.liveGroup.t(lang), [.pulse, .startup]),
             (Copy.guardGroup.t(lang), [.protect]),
             (Copy.systemGroup.t(lang), [.space, .tools])
@@ -539,6 +539,7 @@ extension Module {
         case .browsers: "7"
         case .dev: "8"
         case .messengers: "9"
+        case .privacy: "p"
         case .space: "0"
         case .tools: "-"
         case .pulse: "b"
@@ -559,6 +560,7 @@ extension Module {
         case .browsers: "⌘7"
         case .dev: "⌘8"
         case .messengers: "⌘9"
+        case .privacy: "⌘P"
         case .space: "⌘0"
         case .tools: "⌘-"
         case .pulse: "⌘B"

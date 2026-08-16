@@ -201,7 +201,7 @@ final class AppState {
 
     /// CleanMyMac-style overview rows after Smart Scan.
     func smartOverviewModules() -> [Module] {
-        [.junk, .mail, .trash, .leftovers, .large, .duplicates, .browsers, .dev, .messengers]
+        [.junk, .mail, .trash, .leftovers, .large, .duplicates, .browsers, .dev, .messengers, .privacy]
     }
 
     func selectModule(_ m: Module) {
@@ -406,8 +406,16 @@ final class AppState {
     }
 
     func refreshFDA() {
-        let probe = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Messages/Attachments")
-        hasFDA = (try? FileManager.default.contentsOfDirectory(atPath: probe.path)) != nil
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let probes = [
+            home.appendingPathComponent("Library/Messages/Attachments"),
+            home.appendingPathComponent("Library/Messages"),
+            home.appendingPathComponent("Library/Containers/com.apple.Safari"),
+            home.appendingPathComponent("Library/Group Containers")
+        ]
+        hasFDA = probes.contains { probe in
+            (try? FileManager.default.contentsOfDirectory(atPath: probe.path)) != nil
+        }
         if hasFDA { dismissedFirstRun = true }
     }
 
@@ -430,6 +438,15 @@ final class AppState {
             displayedBytes = selectedBytes
         }
         requestProtectedMeasure(force: true)
+    }
+
+    func dismissSuggestion(_ item: JunkItem) {
+        guard !isBusy else { return }
+        Keep.dismiss(item.id)
+        items.removeAll { $0.id == item.id }
+        withAnimation(Motion.easeMicro) {
+            displayedBytes = selectedBytes
+        }
     }
 
     func removeExclusion(_ path: String) {
@@ -716,18 +733,65 @@ final class AppState {
             await ScanThrottle.pace(heavy: stage == .large || stage == .duplicates || stage == .leftovers)
         }
 
+        // Smart Care one-pass: also run Protection + Performance after cleanup stages.
+        if scope == .smart, isCurrentWork(gen) {
+            let liveOrder: [Module] = [.protect, .pulse, .startup]
+            let base = stages.count
+            let total = base + liveOrder.count
+            for (j, live) in liveOrder.enumerated() {
+                guard isCurrentWork(gen) else { return }
+                scanningStage = live
+                if module == scope {
+                    status = Copy.scanning(live.name)
+                    let targetProgress = Double(base + j + 1) / Double(total)
+                    withAnimation(Motion.level(reduce: reduce)) {
+                        progress = targetProgress
+                        orbFill = 0.14 + 0.78 * targetProgress
+                    }
+                }
+                items.removeAll { $0.module == live }
+                switch live {
+                case .protect:
+                    let rows = await Background.run { LiveProbe.junkProtect() }
+                    guard isCurrentWork(gen) else { return }
+                    items.append(contentsOf: rows)
+                case .pulse:
+                    pulseFocus = nil
+                    pulseFocusStack.removeAll()
+                    let mem = await Background.run { LiveProbe.pulseMemory() }
+                    guard isCurrentWork(gen) else { return }
+                    pulse = mem
+                    items.append(contentsOf: LiveProbe.junk(fromMemory: mem))
+                    let running = LiveProbe.browsersWithWindows()
+                    let withTabs = await Background.run { LiveProbe.pulseTabs(into: mem, only: running) }
+                    guard isCurrentWork(gen) else { return }
+                    pulse = withTabs
+                    items.removeAll { $0.module == .pulse && $0.id.hasPrefix("pulse-tab:") }
+                    items.append(contentsOf: LiveProbe.junk(fromTabs: withTabs))
+                case .startup:
+                    let rows = await Background.run { LiveProbe.junkStartup() }
+                    guard isCurrentWork(gen) else { return }
+                    items.append(contentsOf: rows)
+                default:
+                    break
+                }
+                scannedModules.insert(live)
+                await ScanThrottle.pace(heavy: live == .pulse)
+            }
+        }
+
         guard isCurrentWork(gen) else { return }
         scanningStage = nil
 
         if scope == .smart {
             scannedModules.insert(.smart)
-            for m in Module.allCases where m.isCleanupModule && !m.isLiveModule { scannedModules.insert(m) }
+            for m in Module.allCases where m.isCleanupModule { scannedModules.insert(m) }
         } else {
             scannedModules.insert(scope)
         }
 
         let empty = items.filter {
-            $0.bytes > 0 && (scope == .smart ? !$0.module.isLiveModule : $0.module == scope)
+            $0.bytes > 0 && (scope == .smart ? true : $0.module == scope)
         }.isEmpty
         withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
             scanning = false
@@ -974,6 +1038,9 @@ final class AppState {
             lastFailureNote = status
         }
         GlassTick.play()
+        if freed > 0 {
+            CamNotify.cleaned(freed: freed, lang: copyLang)
+        }
         withAnimation(Motion.easeMicro) {
             items.removeAll { $0.bytes <= 0 }
         }

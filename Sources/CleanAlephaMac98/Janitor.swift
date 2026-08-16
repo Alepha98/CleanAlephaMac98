@@ -23,7 +23,7 @@ enum Janitor {
         if item.kind == .closeTab {
             return closeTab(item)
         }
-        if Keep.isProtected(item.url) {
+        if Keep.isProtected(item.url), !Keep.allowsExplicitCard(item) {
             return .refused(leftover: max(item.bytes, DiskSizer.bytes(at: item.url)))
         }
         if Keep.names.contains(item.url.lastPathComponent) {

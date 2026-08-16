@@ -38,7 +38,7 @@ enum SmartCareKind: String, CaseIterable, Identifiable {
 
     var modules: [Module] {
         switch self {
-        case .cleanup: [.junk, .mail, .trash, .browsers, .messengers]
+        case .cleanup: [.junk, .mail, .trash, .browsers, .messengers, .privacy]
         case .protection: [.protect]
         case .performance: [.pulse, .startup]
         case .applications: [.leftovers, .dev]

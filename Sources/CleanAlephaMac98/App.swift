@@ -198,6 +198,10 @@ struct CleanAlephaMac98App: App {
                     NotificationCenter.default.post(name: .cam98Go, object: Module.messengers.rawValue)
                 }
                 .keyboardShortcut("9", modifiers: .command)
+                Button(Copy.modulePrivacy.t(lang)) {
+                    NotificationCenter.default.post(name: .cam98Go, object: Module.privacy.rawValue)
+                }
+                .keyboardShortcut("p", modifiers: .command)
                 Divider()
                 Button(Copy.modulePulse.t(lang)) {
                     NotificationCenter.default.post(name: .cam98Go, object: Module.pulse.rawValue)

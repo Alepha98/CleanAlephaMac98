@@ -476,24 +476,46 @@ enum Copy {
     static let moduleBrowsers = Line(ru: "Браузеры", en: "Browsers")
     static let moduleDev = Line(ru: "Разработка", en: "Developer")
     static let moduleMessengers = Line(ru: "Мессенджеры", en: "Messengers")
+    static let modulePrivacy = Line(ru: "Приватность", en: "Privacy")
     static let moduleSpace = Line(ru: "Обзор диска", en: "Disk")
     static let moduleTools = Line(ru: "Обслуживание", en: "Maintenance")
 
     static let subSmart = Line(
-        ru: "Кэш и мусор.",
-        en: "Caches and junk."
+        ru: "Кэш, мусор, проверка и быстродействие.",
+        en: "Caches, junk, check, and performance."
     )
-    static let subJunk = Line(ru: "Логи и кэши пользователя", en: "User logs and caches")
+    static let subJunk = Line(ru: "Логи и кэши, в том числе скрытые в Library", en: "Logs and caches, including hidden Library piles")
     static let subMail = Line(ru: "Вложения и кэш Mail", en: "Mail attachments and cache")
     static let subTrash = Line(
         ru: "Корзина пользователя и корзины на дисках.",
         en: "User Trash and volume trashes."
     )
-    static let subLeftovers = Line(ru: "Остатки удалённых приложений", en: "Leftovers from deleted apps")
-    static let subLarge = Line(ru: "Крупные файлы, по умолчанию выкл", en: "Large files, off by default")
+    static let subLeftovers = Line(ru: "Остатки: Support, Caches, Containers, Agents", en: "Leftovers: Support, Caches, Containers, Agents")
+    static let subLarge = Line(ru: "Крупные и старые файлы, по умолчанию выкл", en: "Large and old files, off by default")
     static let subDuplicates = Line(
         ru: "Одинаковые файлы в Загрузках, Документах и на Рабочем столе. По умолчанию выкл.",
         en: "Identical files in Downloads, Documents, and Desktop. Off by default."
+    )
+    static let largeKindVideo = Line(ru: "Видео", en: "Video")
+    static let largeKindArchive = Line(ru: "Архив", en: "Archive")
+    static let largeKindDesign = Line(ru: "Дизайн", en: "Design")
+    static let largeKindFile = Line(ru: "Файл", en: "File")
+    static let spaceLensTitle = Line(ru: "Куда уходит Library", en: "Where Library goes")
+    static let spaceLensLead = Line(
+        ru: "Крупные папки в ~/Library — клик откроет в Finder.",
+        en: "Big folders under ~/Library — click to reveal in Finder."
+    )
+    static let dismissForever = Line(ru: "Больше не предлагать", en: "Don't suggest again")
+    static let cleanNotifyTitle = Line(ru: "CleanAlephaMac98", en: "CleanAlephaMac98")
+    static func cleanNotifyBody(_ freed: Int64) -> Line {
+        Line(
+            ru: "Освободили \(ByteFormat.string(freed, .ru)).",
+            en: "Freed \(ByteFormat.string(freed, .en))."
+        )
+    }
+    static let softScanTruncated = Line(
+        ru: "Часть глубоких папок обрезана, чтобы не грузить Mac.",
+        en: "Some deep folders were truncated to keep the Mac cool."
     )
     static let trashUser = Line(ru: "Корзина пользователя", en: "User Trash")
     static let trashUserSub = Line(
@@ -506,8 +528,12 @@ enum Copy {
         en: "Same contents. Keep one file, the rest can go."
     )
     static let subBrowsers = Line(ru: "Сетевой кэш.", en: "Network cache.")
-    static let subDev = Line(ru: "npm и кэши редакторов.", en: "npm and editor caches.")
+    static let subDev = Line(ru: "npm, yarn, bun, pip, Xcode кэши.", en: "npm, yarn, bun, pip, Xcode caches.")
     static let subMessengers = Line(ru: "Медиа и история. История выкл.", en: "Media and history. History stays off.")
+    static let subPrivacy = Line(
+        ru: "История и недавние. Всё выкл. Логины не трогаем.",
+        en: "History and recents. All off. Logins stay."
+    )
 
     static func scanning(_ stage: Line) -> Line {
         Line(ru: "Сканирую: \(stage.ru)…", en: "Scanning: \(stage.en)…")

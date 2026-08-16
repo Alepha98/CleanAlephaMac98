@@ -30,7 +30,7 @@ enum CareFamily: String, CaseIterable {
     static func of(_ module: Module) -> CareFamily {
         switch module {
         case .smart: .smart
-        case .junk, .mail, .trash, .browsers, .messengers: .cleanup
+        case .junk, .mail, .trash, .browsers, .messengers, .privacy: .cleanup
         case .protect: .protection
         case .pulse, .startup: .performance
         case .leftovers, .dev: .applications

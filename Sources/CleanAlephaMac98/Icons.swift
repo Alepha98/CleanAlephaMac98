@@ -20,6 +20,7 @@ enum Glyph: Equatable, Sendable {
         case .browsers: self = .browsers
         case .dev: self = .dev
         case .messengers: self = .messengers
+        case .privacy: self = .lock
         case .pulse: self = .pulse
         case .protect: self = .protect
         case .startup: self = .startup

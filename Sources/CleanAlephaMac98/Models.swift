@@ -1,7 +1,7 @@
 import Foundation
 
 enum Module: String, CaseIterable, Identifiable, Sendable {
-    case smart, junk, mail, trash, leftovers, large, duplicates, browsers, dev, messengers
+    case smart, junk, mail, trash, leftovers, large, duplicates, browsers, dev, messengers, privacy
     case pulse, protect, startup
     case space, tools
     var id: String { rawValue }
@@ -18,6 +18,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .browsers: Copy.moduleBrowsers
         case .dev: Copy.moduleDev
         case .messengers: Copy.moduleMessengers
+        case .privacy: Copy.modulePrivacy
         case .pulse: Copy.modulePulse
         case .protect: Copy.moduleProtect
         case .startup: Copy.moduleStartup
@@ -38,6 +39,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .browsers: Copy.subBrowsers
         case .dev: Copy.subDev
         case .messengers: Copy.subMessengers
+        case .privacy: Copy.subPrivacy
         case .pulse: Copy.subPulse
         case .protect: Copy.subProtect
         case .startup: Copy.subStartup
@@ -48,7 +50,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
     var isCleanupModule: Bool {
         switch self {
         case .smart, .junk, .mail, .trash, .leftovers, .large, .duplicates, .browsers, .dev, .messengers,
-             .pulse, .protect, .startup:
+             .privacy, .pulse, .protect, .startup:
             true
         case .space, .tools:
             false
@@ -64,7 +66,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
 
     var suggestsFDA: Bool {
         switch self {
-        case .smart, .mail, .browsers, .messengers, .protect: true
+        case .smart, .mail, .browsers, .messengers, .protect, .privacy: true
         default: false
         }
     }
@@ -116,6 +118,7 @@ struct JunkItem: Identifiable, Equatable, Sendable {
         if module == .pulse { return kind == .closeTab }
         if module == .startup { return false }
         if module == .protect { return !isSecondaryRisk }
+        if module == .privacy { return false }
         if isSecondaryRisk { return false }
         if kind == .emptyTrash { return false }
         if module == .leftovers { return false }
@@ -152,6 +155,7 @@ enum Keep {
     ]
 
     static let extrasKey = "cam98.extraProtected"
+    static let dismissedKey = "cam98.dismissedIds"
 
     /// Machine-agnostic: VMs, simulators, Photos. Named iCloud libraries only under CloudDocs.
     static let pathFragments: [String] = [
@@ -169,6 +173,22 @@ enum Keep {
         set { UserDefaults.standard.set(newValue, forKey: extrasKey) }
     }
 
+    static var dismissedIds: [String] {
+        get { UserDefaults.standard.stringArray(forKey: dismissedKey) ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: dismissedKey) }
+    }
+
+    static func isDismissed(_ id: String) -> Bool {
+        dismissedIds.contains(id)
+    }
+
+    static func dismiss(_ id: String) {
+        var xs = dismissedIds
+        if xs.contains(id) { return }
+        xs.append(id)
+        dismissedIds = xs
+    }
+
     static func isProtected(_ url: URL) -> Bool {
         let p = url.standardizedFileURL.path
         if pathFragments.contains(where: { p.contains($0) }) { return true }
@@ -176,6 +196,11 @@ enum Keep {
             if p == extra || p.hasPrefix(extra + "/") { return true }
         }
         return false
+    }
+
+    /// Opt-in heavy paths that live under Keep fragments but may appear as explicit cards.
+    static func allowsExplicitCard(_ item: JunkItem) -> Bool {
+        item.id.hasPrefix("dev-xcode-ios") || item.id.hasPrefix("dev-sim-caches")
     }
 
     static func canExclude(_ url: URL) -> Bool {

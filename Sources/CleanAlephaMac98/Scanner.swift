@@ -13,7 +13,7 @@ private struct Gathered: Sendable {
 enum Scanner {
     static func home() -> URL { FileManager.default.homeDirectoryForCurrentUser }
 
-    private static let minCacheBytes: Int64 = 8_388_608
+    private static let minCacheBytes: Int64 = 2_097_152
 
     /// Chromium-family cache folders inside a profile — never Cookies / Login Data.
     private static let profileCacheNames: [String] = [
@@ -42,13 +42,20 @@ enum Scanner {
     /// Safe Apple cache folders we still list explicitly / allow from enumeration.
     private static let appleCacheAllow: Set<String> = [
         "com.apple.helpd",
-        "GeoServices"
+        "GeoServices",
+        "com.apple.geod",
+        "com.apple.FontRegistry",
+        "com.apple.QuickLook.thumbnailcache"
     ]
 
-    /// Already covered by named junk / browser / dev cards — skip duplicate enum ids.
+    /// Already covered by named junk / browser / deep cards — skip duplicate enum ids.
     private static let cachesCoveredElsewhere: Set<String> = [
-        "CocoaPods", "pip", "ms-playwright", "go-build",
-        "org.swift.swiftpm", "pnpm", "Google", "com.apple.Safari", "com.apple.helpd", "GeoServices"
+        "go-build", "org.swift.swiftpm", "pnpm", "Google", "com.apple.Safari",
+        "Homebrew", "com.spotify.client", "com.getdropbox.Dropbox",
+        "com.microsoft.OneDrive", "pip", "CocoaPods", "ms-playwright",
+        "com.apple.helpd", "GeoServices", "com.apple.geod",
+        "com.apple.FontRegistry", "com.apple.QuickLook.thumbnailcache",
+        "org.carthage.CarthageKit", "composer"
     ]
 
     /// Container caches we never list (Photos / analysis / iCloud-adjacent).
@@ -63,7 +70,7 @@ enum Scanner {
     ]
 
     enum ScanStage: Int, CaseIterable, Sendable {
-        case junk, mail, trash, leftovers, large, duplicates, browsers, dev, messengers
+        case junk, mail, trash, leftovers, large, duplicates, browsers, dev, messengers, privacy
         func items() -> [JunkItem] {
             switch self {
             case .junk: Scanner.junk()
@@ -75,6 +82,7 @@ enum Scanner {
             case .browsers: Scanner.browsers()
             case .dev: Scanner.dev()
             case .messengers: Scanner.messengers()
+            case .privacy: DeepScan.privacyItems()
             }
         }
 
@@ -89,6 +97,7 @@ enum Scanner {
             case .browsers: .browsers
             case .dev: .dev
             case .messengers: .messengers
+            case .privacy: .privacy
             }
         }
 
@@ -126,7 +135,12 @@ enum Scanner {
             // Trash: any non-empty bin counts (even small). Others keep the 16KB floor.
             let minBytes: Int64 = stage == .trash ? 1 : 16_384
             return StageChunk(
-                items: raw.filter { $0.bytes > minBytes && !Keep.isProtected($0.url) },
+                items: raw.filter { item in
+                    guard item.bytes > minBytes else { return false }
+                    if Keep.isDismissed(item.id) { return false }
+                    if Keep.allowsExplicitCard(item) { return true }
+                    return !Keep.isProtected(item.url)
+                },
                 failed: failed
             )
         }
@@ -198,8 +212,9 @@ enum Scanner {
         rows.append(contentsOf: enumeratedDotCache())
         rows.append(contentsOf: enumeratedContainerCaches())
         rows.append(contentsOf: enumeratedAppSupportCaches())
+        rows.append(contentsOf: DeepScan.junkExtras())
         rows.append(contentsOf: oldInstallers())
-        return dedupeByURL(rows).sorted { $0.bytes > $1.bytes }
+        return dedupeByURL(rows).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
     }
 
     /// Walk ~/Library/Containers/*/Data/Library/Caches — big gap vs CleanMyMac-style finds.
@@ -557,7 +572,9 @@ enum Scanner {
             guard b > 8_388_608 else { continue }
             out.append(JunkItem(id: "left-\(name)", module: .leftovers, title: Line.proper(name), subtitle: Copy.leftoverGone, url: url, bytes: b, selected: false, kind: .wipeChildren, keepsLogins: false))
         }
-        return Gathered(items: out.sorted { $0.bytes > $1.bytes }, failed: false)
+        out.append(contentsOf: DeepScan.leftoverExtras())
+        let filtered = dedupeByURL(out).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
+        return Gathered(items: filtered, failed: false)
     }
 
     /// Skip leftovers that belong to an installed app — names from this Mac, not a fixed machine list.
@@ -601,32 +618,87 @@ enum Scanner {
     }
 
     private static func largeFiles() -> Gathered {
-        let roots = ["Downloads", "Desktop", "Movies", "Documents"].map { home().appendingPathComponent($0) }
+        let roots = [
+            "Downloads", "Desktop", "Movies", "Documents",
+            "Library/Application Support", "Library/Containers"
+        ].map { home().appendingPathComponent($0) }
         var found: [JunkItem] = []
         var failed = false
-        let skip = Set(["Personal", "Education", "Work", "STEM", "Safari", "CloudDocs"])
+        let skip = Set(["Personal", "Education", "Work", "STEM", "Safari", "CloudDocs", "Photos"])
+        let cutoffOld = Date().addingTimeInterval(-90 * 24 * 3600)
         for root in roots {
             var isDir: ObjCBool = false
             let exists = FileManager.default.fileExists(atPath: root.path, isDirectory: &isDir)
             guard exists else { continue }
-            guard let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
+            guard let en = FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else {
                 if isDir.boolValue { failed = true }
                 continue
             }
             var depthGuard = 0
+            let deepRoot = root.path.contains("/Library/")
+            let limit = deepRoot ? 8_000 : 14_000
             for case let url as URL in en {
                 depthGuard += 1
-                if depthGuard > 12_000 { break }
+                if depthGuard > limit { break }
                 if skip.contains(url.lastPathComponent) { en.skipDescendants(); continue }
                 if Keep.isProtected(url) { en.skipDescendants(); continue }
-                if ["node_modules", ".git", ".colima", "DerivedData"].contains(url.lastPathComponent) { en.skipDescendants(); continue }
-                guard let rv = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), rv.isRegularFile == true else { continue }
+                if ["node_modules", ".git", ".colima", "DerivedData", "CoreSimulator", "iOS DeviceSupport"].contains(url.lastPathComponent) {
+                    en.skipDescendants()
+                    continue
+                }
+                guard let rv = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]),
+                      rv.isRegularFile == true else { continue }
                 let sz = Int64(rv.fileSize ?? 0)
-                guard sz >= 80_000_000 else { continue }
-                found.append(JunkItem(id: "large-\(url.path)", module: .large, title: Line.proper(url.lastPathComponent), subtitle: Line.proper(PathFormat.tilde(url.deletingLastPathComponent())), url: url, bytes: sz, selected: false, kind: .deleteItem, keepsLogins: false))
+                let minSize: Int64 = deepRoot ? 120_000_000 : 50_000_000
+                guard sz >= minSize else { continue }
+                let modified = rv.contentModificationDate ?? .distantPast
+                let old = modified < cutoffOld
+                let ageDays = max(0, Int(Date().timeIntervalSince(modified) / 86_400))
+                let kindLabel: String = {
+                    switch url.pathExtension.lowercased() {
+                    case "mov", "mp4", "mkv", "m4v": return Copy.largeKindVideo.t(.ru)
+                    case "zip", "dmg", "iso", "gz", "rar", "7z": return Copy.largeKindArchive.t(.ru)
+                    case "psd", "ai", "sketch": return Copy.largeKindDesign.t(.ru)
+                    default: return Copy.largeKindFile.t(.ru)
+                    }
+                }()
+                let kindLabelEn: String = {
+                    switch url.pathExtension.lowercased() {
+                    case "mov", "mp4", "mkv", "m4v": return Copy.largeKindVideo.t(.en)
+                    case "zip", "dmg", "iso", "gz", "rar", "7z": return Copy.largeKindArchive.t(.en)
+                    case "psd", "ai", "sketch": return Copy.largeKindDesign.t(.en)
+                    default: return Copy.largeKindFile.t(.en)
+                    }
+                }()
+                let sub = Line(
+                    ru: old
+                        ? "\(kindLabel) · \(ageDays) дн. · \(PathFormat.tilde(url.deletingLastPathComponent()))"
+                        : "\(kindLabel) · \(PathFormat.tilde(url.deletingLastPathComponent()))",
+                    en: old
+                        ? "\(kindLabelEn) · \(ageDays)d · \(PathFormat.tilde(url.deletingLastPathComponent()))"
+                        : "\(kindLabelEn) · \(PathFormat.tilde(url.deletingLastPathComponent()))"
+                )
+                found.append(JunkItem(
+                    id: "large-\(url.path.hashValue)",
+                    module: .large,
+                    title: Line.proper(url.lastPathComponent),
+                    subtitle: sub,
+                    url: url,
+                    bytes: sz,
+                    selected: false,
+                    kind: .deleteItem,
+                    keepsLogins: false
+                ))
             }
         }
-        return Gathered(items: found.sorted { $0.bytes > $1.bytes }, failed: failed)
+        let items = found
+            .filter { !Keep.isDismissed($0.id) }
+            .sorted { $0.bytes > $1.bytes }
+        return Gathered(items: Array(items.prefix(120)), failed: failed)
     }
 
     private static func browsers() -> [JunkItem] {
@@ -805,14 +877,16 @@ enum Scanner {
     }
 
     private static func dev() -> [JunkItem] {
-        [
-            item("derived", .dev, Line.proper("Xcode DerivedData"), Line(ru: "Симулятор и DeviceSupport не трогаем", en: "Simulator and DeviceSupport stay"), "Library/Developer/Xcode/DerivedData"),
+        var rows: [JunkItem] = [
+            item("derived", .dev, Line.proper("Xcode DerivedData"), Line(ru: "Симулятор и DeviceSupport — отдельно, выкл.", en: "Simulator / DeviceSupport listed separately, off"), "Library/Developer/Xcode/DerivedData"),
             item("npm", .dev, Line.proper("npm cache"), Line.proper("_cacache"), ".npm/_cacache"),
             item("npx", .dev, Line.proper("npx cache"), Line.proper("_npx"), ".npm/_npx"),
             item("go-build", .dev, Line.proper("Go build cache"), Line.proper("go-build"), "Library/Caches/go-build"),
             item("swiftpm", .dev, Line.proper("SwiftPM cache"), Line.proper("org.swift.swiftpm"), "Library/Caches/org.swift.swiftpm"),
             item("pnpm", .dev, Line.proper("pnpm cache"), Line.proper("Library/Caches/pnpm"), "Library/Caches/pnpm")
         ].compactMap { $0 }
+        rows.append(contentsOf: DeepScan.devExtras())
+        return dedupeByURL(rows).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
     }
 
     private static func messengers() -> [JunkItem] {
