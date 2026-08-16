@@ -23,6 +23,9 @@ tail -f ~/Library/Logs/CleanAlephaMac98.log
 
 Перед каждым прогоном: `killall CleanAlephaMac98`; открыть из `~/Applications`. Не тестировать из папки `dist/` в репо – это не установленная копия.
 
+Полный каталог цепочек действий (≥300): [`docs/USER_SCENARIOS.md`](USER_SCENARIOS.md).
+Автопрогон: `scripts/qa-run.sh` + `scripts/qa-probe.sh`.
+
 ---
 
 ## 0. Стенд
@@ -134,7 +137,7 @@ tail -f ~/Library/Logs/CleanAlephaMac98.log
 
 ---
 
-## 5. Проверка (не антивирус)
+## 5. Проверка
 
 | ID | Сценарий | Ожидание |
 | --- | --- | --- |
@@ -145,7 +148,7 @@ tail -f ~/Library/Logs/CleanAlephaMac98.log
 | C5 | Наш агент `com.alepha98.CleanAlephaMac98.auto` | Не предлагать удалить |
 | C6 | `/etc/hosts` с кучей редиректов | Совет, файл не правится |
 | C7 | Очистить выбранный adware | Папка ушла, лог без ошибки |
-| C8 | Скан не равен Касперскому | В тексте «не антивирус», нет сигнатурного скана всей ФС |
+| C8 | Объём проверки | Только известный adware / агенты / hosts – без сигнатурного скана всей ФС |
 
 ---
 
@@ -527,3 +530,6 @@ Dsk6: нет «дырки» если Colima нет на диске – сегм�
 12. Записать `docs/TEST-RUN.md`
 
 Clean на живой машине: только мелкий кэш / тестовая папка. **Не** корзина с нужным, **не** Telegram history.
+---
+
+Живой UI-прогон: [`UI_RUN_RESULTS.md`](UI_RUN_RESULTS.md), харнесс `scripts/ui-user-run.py`.

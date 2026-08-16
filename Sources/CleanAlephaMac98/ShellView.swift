@@ -15,17 +15,17 @@ struct ShellView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            SidebarView()
-            ZStack {
-                LinearGradient(colors: [C.bgTop, C.bgBot], startPoint: .top, endPoint: .bottom)
-                RadialGradient(
-                    colors: [C.glow.opacity(0.5), Color.clear],
-                    center: .top,
-                    startRadius: 20,
-                    endRadius: 520
-                )
-                .blendMode(.plusLighter)
+        ZStack {
+            // One wash under sidebar + content (CMM-like continuous chrome).
+            ShellAtmosphere(
+                richCare: state.module == .smart,
+                family: CareFamily.of(state.module == .smart
+                    ? (state.scanningStage ?? .smart)
+                    : state.module)
+            )
+
+            HStack(spacing: 0) {
+                SidebarView()
                 Group {
                     switch state.module {
                     case .space: SpaceView()
@@ -34,14 +34,19 @@ struct ShellView: View {
                     }
                 }
                 .id(pane)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .transition(.opacity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(Motion.easeModule, value: pane)
+        }
+        .overlay {
+            ThemeWashOverlay(amount: state.themeWash, night: state.themeWashNight)
+                .allowsHitTesting(false)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .opacity(intro ? 1 : 0)
         .preferredColorScheme(state.appearance.colorScheme)
+        .animation(Motion.themeCross, value: state.appearance)
         .background(WindowBackgroundDrag(appearance: state.appearance))
         .onAppear {
             state.refreshFDA()
@@ -76,8 +81,13 @@ struct ShellView: View {
         .onReceive(NotificationCenter.default.publisher(for: .cam98Keys)) { _ in
             state.showShortcuts = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: .cam98Go)) { note in
+            guard let raw = note.object as? String, let module = Module(rawValue: raw) else { return }
+            state.selectModule(module)
+        }
         .environment(\.shellIntro, intro)
         .environment(\.copyLang, state.copyLang)
+        .environment(\.careChrome, state.module == .smart)
         .sheet(isPresented: Binding(
             get: { state.showShortcuts },
             set: { state.showShortcuts = $0 }
@@ -102,6 +112,9 @@ private struct ShortcutsSheet: View {
             ("⌘⇧D", Copy.deselect.t(lang)),
             ("⌘. / Esc", Copy.stop.t(lang)),
             ("⌘1–9", Copy.cleanGroup.t(lang)),
+            ("⌘B", Copy.modulePulse.t(lang)),
+            ("⌘K", Copy.moduleProtect.t(lang)),
+            ("⌘L", Copy.moduleStartup.t(lang)),
             ("⌘0", Copy.moduleSpace.t(lang)),
             ("⌘-", Copy.moduleTools.t(lang))
         ]
@@ -143,21 +156,35 @@ private struct ShellIntroKey: EnvironmentKey {
     static let defaultValue = true
 }
 
+private struct CareChromeKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 extension EnvironmentValues {
     var shellIntro: Bool {
         get { self[ShellIntroKey.self] }
         set { self[ShellIntroKey.self] = newValue }
+    }
+    /// Smart Care rich purple wash — use light text/icons on top.
+    var careChrome: Bool {
+        get { self[CareChromeKey.self] }
+        set { self[CareChromeKey.self] = newValue }
     }
 }
 
 struct SidebarView: View {
     @Environment(AppState.self) private var state
     @Environment(\.copyLang) private var lang
+    @Environment(\.careChrome) private var careChrome
+
+    private var brandInk: Color { careChrome ? C.careInk : C.ink }
+    private var brandSecondary: Color { careChrome ? C.careSecondary : C.secondary }
+    private var sectionInk: Color { careChrome ? C.careMuted : C.secondary.opacity(0.85) }
 
     private var groups: [(String, [Module])] {
         [
             (Copy.scanGroup.t(lang), [.smart]),
-            (Copy.cleanGroup.t(lang), [.junk, .mail, .trash, .leftovers, .large, .browsers, .dev, .messengers]),
+            (Copy.cleanGroup.t(lang), [.junk, .mail, .trash, .leftovers, .large, .duplicates, .browsers, .dev, .messengers]),
             (Copy.liveGroup.t(lang), [.pulse, .startup]),
             (Copy.guardGroup.t(lang), [.protect]),
             (Copy.systemGroup.t(lang), [.space, .tools])
@@ -166,29 +193,40 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(nsImage: Art.image("AppIcon"))
-                    .resizable()
-                    .frame(width: 30, height: 30)
-                    .clipShape(RoundedRectangle(cornerRadius: S.iconSquircle, style: .continuous))
-                    .shadow(color: C.action.opacity(0.25), radius: 6, y: 2)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("CleanAlephaMac98")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(C.ink)
-                    Text(Copy.personalMac.t(lang))
-                        .font(F.micro())
-                        .tracking(0.6)
-                        .foregroundStyle(C.secondary)
+            Button {
+                if let url = URL(string: "https://github.com/Alepha98/CleanAlephaMac98") {
+                    NSWorkspace.shared.open(url)
                 }
-                .lineLimit(1)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(nsImage: Art.image("AppIcon"))
+                        .resizable()
+                        .frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: S.iconSquircle + 3, style: .continuous))
+                        .shadow(color: C.action.opacity(0.28), radius: 8, y: 2)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("CleanAlephaMac98")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(brandInk)
+                        Text(Copy.personalMac.t(lang))
+                            .font(F.micro())
+                            .tracking(0.6)
+                            .foregroundStyle(brandSecondary)
+                    }
+                    .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             .padding(.top, S.trafficClearance)
             .padding(.horizontal, S.md)
             .padding(.bottom, S.lg)
-            .accessibilityElement(children: .combine)
+            .help(Copy.openGitHubHelp.t(lang))
             .accessibilityLabel("CleanAlephaMac98, \(Copy.personalMac.t(lang))")
+            .accessibilityHint(Copy.openGitHub.t(lang))
+            .focusStroke(radius: 12)
 
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: S.md) {
@@ -197,7 +235,7 @@ struct SidebarView: View {
                             Text(group.0.uppercased())
                                 .font(F.micro())
                                 .tracking(0.6)
-                                .foregroundStyle(C.secondary.opacity(0.8))
+                                .foregroundStyle(sectionInk)
                                 .padding(.horizontal, S.sm)
                                 .padding(.bottom, 2)
                                 .accessibilityAddTraits(.isHeader)
@@ -216,17 +254,137 @@ struct SidebarView: View {
                 .padding(.horizontal, S.xs)
             }
 
+            Spacer(minLength: 0)
+
             if !state.hasFDA {
                 FdaSidebarCard()
             }
+
+            SidebarThemeBar()
+                .padding(.horizontal, S.sm)
+                .padding(.bottom, S.md)
+                .padding(.top, S.xs)
         }
         .animation(Motion.easeMicro, value: state.hasFDA)
+        .animation(Motion.easeMicro, value: careChrome)
         .frame(width: S.sidebar)
         .frame(maxHeight: .infinity)
-        .background(C.rail.opacity(0.96))
-        .overlay(alignment: .trailing) {
-            Rectangle().fill(C.hairline.opacity(0.7)).frame(width: 1)
+        .background {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(careChrome ? 0.42 : 0.55)
+                .overlay(C.rail.opacity(careChrome ? 0.12 : 0.22))
         }
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(C.hairline.opacity(careChrome ? 0.35 : 0.55)).frame(width: 1)
+        }
+    }
+}
+
+/// Day / night / system — sliding rose pill at the foot of the rail.
+private struct SidebarThemeBar: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.copyLang) private var lang
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.careChrome) private var careChrome
+    @Environment(\.colorScheme) private var scheme
+
+    private var choices: [(AppearanceChoice, String, Line)] {
+        [
+            (.light, "sun.max.fill", Copy.northernDay),
+            (.system, "circle.lefthalf.filled", Copy.followSystem),
+            (.dark, "moon.fill", Copy.northernNight)
+        ]
+    }
+
+    private var chipInk: Color {
+        careChrome ? C.careInk.opacity(0.78) : C.ink.opacity(0.75)
+    }
+
+    private var barFill: Color {
+        if scheme == .dark {
+            return Color.white.opacity(0.10)
+        }
+        return Color.white.opacity(0.94)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(Copy.themeBar.t(lang).uppercased())
+                .font(F.micro())
+                .tracking(0.6)
+                .foregroundStyle(careChrome ? C.careMuted : C.secondary)
+                .padding(.horizontal, 4)
+                .accessibilityAddTraits(.isHeader)
+
+            GlassActions {
+                HStack(spacing: 6) {
+                    ForEach(choices, id: \.0) { choice, symbol, title in
+                        let on = state.appearance == choice
+                        Button {
+                            state.chooseAppearance(choice)
+                        } label: {
+                            Image(systemName: symbol)
+                                .font(.system(size: 14, weight: .semibold))
+                                .symbolRenderingMode(.monochrome)
+                                .foregroundStyle(on ? C.accentText : chipInk)
+                                .frame(maxWidth: .infinity)
+                                .frame(minHeight: S.hitMin)
+                                .contentShape(Rectangle())
+                                .padding(.horizontal, 2)
+                                .camGlass(
+                                    tint: on ? C.action.opacity(0.32) : C.action.opacity(0.06),
+                                    interactive: true,
+                                    shape: .rounded
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help(title.t(lang))
+                        .accessibilityLabel(title.t(lang))
+                        .accessibilityIdentifier("theme.\(choice.rawValue)")
+                        .accessibilityAddTraits(on ? [.isSelected] : [])
+                    }
+                }
+                .padding(3)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(barFill)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(C.hairline.opacity(scheme == .dark ? 0.45 : 0.75), lineWidth: 1)
+                        )
+                )
+            }
+            .animation(reduceMotion ? Motion.easeReduced : Motion.themeCross, value: state.appearance)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Copy.themeBar.t(lang))
+    }
+}
+
+private struct ThemeWashOverlay: View {
+    var amount: Double
+    var night: Bool
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: night
+                    ? [C.glow.opacity(0.55), C.bgBot.opacity(0.35)]
+                    : [C.glow.opacity(0.42), Color.white.opacity(0.18)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            RadialGradient(
+                colors: [C.action.opacity(night ? 0.28 : 0.22), Color.clear],
+                center: .top,
+                startRadius: 40,
+                endRadius: 480
+            )
+            .blendMode(.plusLighter)
+        }
+        .opacity(amount)
+        .ignoresSafeArea()
     }
 }
 
@@ -278,6 +436,8 @@ private struct SidebarRow: View {
     var action: () -> Void
     @Environment(AppState.self) private var state
     @Environment(\.copyLang) private var lang
+    @Environment(\.careChrome) private var careChrome
+    @Environment(\.colorScheme) private var scheme
     @State private var hover = false
 
     private var sizeHint: String? {
@@ -287,26 +447,58 @@ private struct SidebarRow: View {
         return ByteFormat.string(b, lang)
     }
 
+    private var labelInk: Color {
+        if careChrome { return selected ? C.careInk : C.careSecondary }
+        return selected ? C.ink : C.secondary
+    }
+
+    private var hintInk: Color { careChrome ? C.careMuted : C.secondary }
+    private var iconInk: Color {
+        if careChrome { return selected ? C.careInk : C.careSecondary }
+        return selected ? C.accentText : C.secondary
+    }
+
+    /// Light Smart Care: dark translucent chips; night: white frost.
+    private var chipFill: Color {
+        if !careChrome {
+            return selected ? C.action.opacity(0.18) : C.iconWell.opacity(hover ? 1.15 : 1)
+        }
+        if scheme == .light {
+            return selected ? C.careInk.opacity(0.12) : C.careInk.opacity(hover ? 0.08 : 0.05)
+        }
+        return selected ? Color.white.opacity(0.22) : Color.white.opacity(hover ? 0.14 : 0.08)
+    }
+
+    private var rowFill: Color {
+        if !careChrome {
+            return selected ? C.pill : (hover ? C.pillHover : Color.clear)
+        }
+        if scheme == .light {
+            return selected ? C.careInk.opacity(0.10) : (hover ? C.careInk.opacity(0.06) : Color.clear)
+        }
+        return selected ? Color.white.opacity(0.20) : (hover ? Color.white.opacity(0.10) : Color.clear)
+    }
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
                 ZStack {
                     RoundedRectangle(cornerRadius: S.iconSquircle, style: .continuous)
-                        .fill(selected ? C.action.opacity(0.20) : C.iconWell.opacity(hover ? 1.2 : 1))
+                        .fill(chipFill)
                     CamIcon(glyph: Glyph(module: module), size: 15)
-                        .foregroundStyle(selected ? C.accentText : C.secondary)
+                        .foregroundStyle(iconInk)
                 }
                 .frame(width: 26, height: 26)
                 Text(module.name.t(lang))
                     .font(F.body())
-                    .foregroundStyle(selected ? C.ink : C.secondary)
+                    .foregroundStyle(labelInk)
                     .lineLimit(1)
                     .layoutPriority(1)
                 Spacer(minLength: 0)
                 if let sizeHint {
                     Text(sizeHint)
                         .font(F.size())
-                        .foregroundStyle(C.secondary)
+                        .foregroundStyle(hintInk)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
@@ -316,20 +508,15 @@ private struct SidebarRow: View {
             .padding(.vertical, 2)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(
-                        selected
-                            ? C.pill
-                            : (hover ? C.pillHover : Color.clear)
-                    )
+                    .fill(rowFill)
             )
-            .shadow(color: selected ? C.pillShadow : .clear, radius: 8, y: 2)
+            .shadow(color: selected && !careChrome ? C.pillShadow : .clear, radius: 8, y: 2)
             .focusStroke(radius: 10)
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
         .opacity(enabled ? 1 : (selected ? 0.72 : 0.45))
         .help(module.shortcutHint.isEmpty ? module.name.t(lang) : "\(module.name.t(lang)) · \(module.shortcutHint)")
-        .modifier(CommandShortcut(module: module))
         .accessibilityLabel(sizeHint.map { "\(module.name.t(lang)), \($0)" } ?? module.name.t(lang))
         .accessibilityHint(module.shortcutHint)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
@@ -348,12 +535,15 @@ extension Module {
         case .trash: "4"
         case .leftovers: "5"
         case .large: "6"
+        case .duplicates: "d"
         case .browsers: "7"
         case .dev: "8"
         case .messengers: "9"
         case .space: "0"
         case .tools: "-"
-        case .pulse, .protect, .startup: nil
+        case .pulse: "b"
+        case .protect: "k"
+        case .startup: "l"
         }
     }
 
@@ -365,12 +555,15 @@ extension Module {
         case .trash: "⌘4"
         case .leftovers: "⌘5"
         case .large: "⌘6"
+        case .duplicates: "⌘D"
         case .browsers: "⌘7"
         case .dev: "⌘8"
         case .messengers: "⌘9"
         case .space: "⌘0"
         case .tools: "⌘-"
-        case .pulse, .protect, .startup: ""
+        case .pulse: "⌘B"
+        case .protect: "⌘K"
+        case .startup: "⌘L"
         }
     }
 }

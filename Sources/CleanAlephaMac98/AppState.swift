@@ -39,6 +39,11 @@ final class AppState {
             applyAppearance()
         }
     }
+    /// 0…1 rose wash over the shell when the theme flips.
+    var themeWash: Double = 0
+    var themeWashNight = false
+    @ObservationIgnored
+    private var themeWashToken = 0
     var language: LanguageChoice = AppState.storedLanguage {
         didSet { UserDefaults.standard.set(language.rawValue, forKey: AppState.languageKey) }
     }
@@ -49,6 +54,10 @@ final class AppState {
     var pulse: PulseSnapshot?
     /// Drill-down into one app inside Performance (nil = overview).
     var pulseFocus: String?
+    /// Nested drill: RAM → app → back to RAM, not straight to overview.
+    var pulseFocusStack: [String] = []
+    /// When opened from Smart overview tiles – Back returns to Smart.
+    var returnToModule: Module?
     /// Modules where the user pressed «Scan again» and is back on the home orb.
     var resultsDismissed: Set<Module> = []
 
@@ -76,6 +85,36 @@ final class AppState {
         NSApp.appearance = appearance.nsAppearance
     }
 
+    @MainActor
+    func chooseAppearance(_ next: AppearanceChoice) {
+        guard next != appearance else { return }
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        themeWashToken += 1
+        let token = themeWashToken
+        if !reduce {
+            switch next {
+            case .dark: themeWashNight = true
+            case .light: themeWashNight = false
+            case .system:
+                themeWashNight = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            }
+            withAnimation(Motion.themeWashIn) {
+                themeWash = 1
+            }
+        }
+        withAnimation(reduce ? Motion.easeReduced : Motion.themeCross) {
+            appearance = next
+        }
+        guard !reduce else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 320_000_000)
+            guard token == themeWashToken else { return }
+            withAnimation(Motion.themeWashOut) {
+                themeWash = 0
+            }
+        }
+    }
+
     var selectedBytes: Int64 {
         visibleItems().reduce(0) { $0 + ($1.selected && $1.bytes > 0 ? $1.bytes : 0) }
     }
@@ -94,6 +133,8 @@ final class AppState {
     /// Module currently being scanned/cleaned – sidebar stays open for the rest.
     @ObservationIgnored
     private(set) var busyModule: Module?
+    /// Which cleanup layer the Smart scan is on right now (for accent tiles).
+    var scanningStage: Module?
 
     func requestProtectedMeasure(force: Bool = false) {
         if measuringProtected { return }
@@ -148,9 +189,19 @@ final class AppState {
         return scannedModules.contains(m)
     }
 
+    /// Smart Care family tile → best layer, with Back to Smart.
+    func openCareKind(_ kind: SmartCareKind) {
+        let scored: [(Module, Int64)] = kind.modules.map { mod in
+            let sum = items.filter { $0.module == mod && $0.bytes > 0 }.reduce(Int64(0)) { $0 + $1.bytes }
+            return (mod, sum)
+        }
+        let pick = scored.max(by: { $0.1 < $1.1 })?.0 ?? kind.modules[0]
+        openModuleFromSmart(pick)
+    }
+
     /// CleanMyMac-style overview rows after Smart Scan.
     func smartOverviewModules() -> [Module] {
-        [.junk, .mail, .trash, .leftovers, .large, .browsers, .dev, .messengers]
+        [.junk, .mail, .trash, .leftovers, .large, .duplicates, .browsers, .dev, .messengers]
     }
 
     func selectModule(_ m: Module) {
@@ -158,14 +209,56 @@ final class AppState {
             cancelWork()
         }
         withAnimation(Motion.springUI) {
-            if m != .pulse { pulseFocus = nil }
+            if m != .pulse {
+                pulseFocus = nil
+                pulseFocusStack.removeAll()
+            }
+            // Sidebar / shortcuts leave Smart breadcrumb; tiles use openModuleFromSmart.
+            returnToModule = nil
             module = m
+        }
+    }
+
+    /// Smart overview tile → layer, with Back to Smart.
+    func openModuleFromSmart(_ m: Module) {
+        guard m != .smart else { return }
+        withAnimation(Motion.springUI) {
+            returnToModule = .smart
+            pulseFocus = nil
+            pulseFocusStack.removeAll()
+            module = m
+        }
+    }
+
+    var canNavigateBack: Bool {
+        pulseFocus != nil || returnToModule != nil
+    }
+
+    var navigateBackLabel: String {
+        if pulseFocus != nil { return pulseBackLabel }
+        if returnToModule == .smart { return Copy.backToSmart.t(copyLang) }
+        return Copy.pulseBack.t(copyLang)
+    }
+
+    func navigateBack() {
+        if pulseFocus != nil {
+            closePulseFocus()
+            return
+        }
+        if let back = returnToModule {
+            withAnimation(Motion.springUI) {
+                returnToModule = nil
+                module = back
+            }
         }
     }
 
     func openPulseApp(_ name: String) {
         guard module == .pulse, !isBusy else { return }
         withAnimation(Motion.springUI) {
+            if let cur = pulseFocus, cur != name {
+                pulseFocusStack.append(cur)
+            }
             pulseFocus = name
         }
     }
@@ -180,6 +273,17 @@ final class AppState {
 
     func closePulseFocus() {
         withAnimation(Motion.springUI) {
+            if let prev = pulseFocusStack.popLast() {
+                pulseFocus = prev
+            } else {
+                pulseFocus = nil
+            }
+        }
+    }
+
+    func exitPulseFocus() {
+        withAnimation(Motion.springUI) {
+            pulseFocusStack.removeAll()
             pulseFocus = nil
         }
     }
@@ -188,7 +292,15 @@ final class AppState {
         guard let focus = pulseFocus else { return "" }
         if focus == LiveProbe.pulseFocusRAM { return Copy.pulseRamFocus.t(copyLang) }
         if focus == LiveProbe.pulseFocusCPU { return Copy.pulseCpuFocus.t(copyLang) }
-        return Copy.systemProcTitle(focus) ?? focus
+        return Copy.humanAppTitle(focus).t(copyLang)
+    }
+
+    var pulseFocusSubtitle: String {
+        ""
+    }
+
+    var pulseBackLabel: String {
+        pulseFocusStack.isEmpty ? Copy.pulseBackOverview.t(copyLang) : Copy.pulseBack.t(copyLang)
     }
 
     private func pulseCpuScore(_ item: JunkItem) -> Double {
@@ -243,6 +355,8 @@ final class AppState {
         guard !isBusy else { return }
         resultsDismissed.insert(module)
         pulseFocus = nil
+        pulseFocusStack.removeAll()
+        // Keep returnToModule so Back still works after rescan home.
         scanFinished = false
         statusStopped = false
         lastFailureNote = nil
@@ -463,6 +577,10 @@ final class AppState {
 
     @MainActor
     func cancelWork() {
+        if canNavigateBack, !scanning, !cleaning {
+            navigateBack()
+            return
+        }
         workGeneration += 1
         workTask?.cancel()
         workTask = nil
@@ -520,6 +638,7 @@ final class AppState {
         let gen = workGeneration
         busyModule = scope
         scanning = true
+        scanningStage = nil
         scanFinished = false
         cleaning = false
         lastFailureNote = nil
@@ -546,6 +665,7 @@ final class AppState {
         var completed = false
         defer {
             if busyModule == scope { busyModule = nil }
+            if isCurrentWork(gen) { scanningStage = nil }
             if !completed, isCurrentWork(gen) {
                 scanning = false
                 lastFailureNote = nil
@@ -572,6 +692,7 @@ final class AppState {
         CamLog.line("scan start \(scope.rawValue) stages=\(n)")
         for (i, stage) in stages.enumerated() {
             guard isCurrentWork(gen) else { return }
+            scanningStage = stage.module
             if module == scope {
                 status = Copy.scanning(stage.module.name)
                 let targetProgress = Double(i + 1) / Double(n)
@@ -591,9 +712,12 @@ final class AppState {
             if module == scope {
                 displayedBytes = selectedBytes
             }
+            // Soft CPU budget between stages.
+            await ScanThrottle.pace(heavy: stage == .large || stage == .duplicates || stage == .leftovers)
         }
 
         guard isCurrentWork(gen) else { return }
+        scanningStage = nil
 
         if scope == .smart {
             scannedModules.insert(.smart)
@@ -684,6 +808,7 @@ final class AppState {
         case .pulse:
             // RAM + CPU first (fast). Tabs are separate and never block the Stop / results UI.
             pulseFocus = nil
+            pulseFocusStack.removeAll()
             let mem = await Background.run { LiveProbe.pulseMemory() }
             guard isCurrentWork(gen) else { return }
             pulse = mem
@@ -696,7 +821,7 @@ final class AppState {
                     scanFinished = true
                     progress = 1
                     orbFill = 0.88
-                    status = Copy.ramHonest
+                    status = Copy.pulseReady
                     displayedBytes = selectedBytes
                 }
             }
@@ -713,7 +838,7 @@ final class AppState {
             items.append(contentsOf: LiveProbe.junk(fromTabs: withTabs))
             if module == scope, let note = withTabs.tabAccess, note == Copy.needAutomation {
                 lastFailureNote = note
-                status = Line(ru: "\(Copy.ramHonest.ru) \(note.ru)", en: "\(Copy.ramHonest.en) \(note.en)")
+                status = Line(ru: "\(Copy.pulseReady.ru) \(note.ru)", en: "\(Copy.pulseReady.en) \(note.en)")
             }
             CamLog.line("scanLive pulse tabs extras=\(withTabs.tabs.count)")
             return
@@ -744,7 +869,7 @@ final class AppState {
             if empty {
                 status = scope == .protect ? Copy.protectClear : Copy.layerClean
             } else if scope == .pulse {
-                status = Copy.ramHonest
+                status = Copy.pulseReady
             } else {
                 status = Copy.canClear(selected: selectedBytes, found: foundBytes)
             }

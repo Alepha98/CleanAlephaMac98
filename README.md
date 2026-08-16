@@ -5,20 +5,23 @@
 <h1 align="center">CleanAlephaMac98</h1>
 
 <p align="center">
-  <strong>Клинер для Mac. Логины Safari и Chrome не трогаем.</strong><br>
-  A Mac cleaner. Safari and Chrome logins stay.
+  <strong>Клинер для Mac.</strong><br>
+  A Mac cleaner.
 </p>
 
 <p align="center">
   <a href="https://github.com/Alepha98/CleanAlephaMac98/releases/latest/download/CleanAlephaMac98.dmg"><img src="https://img.shields.io/badge/Download-DMG-C45C6A?style=for-the-badge&logo=apple&logoColor=white" alt="Download DMG"></a>
   &nbsp;
   <a href="https://github.com/Alepha98/CleanAlephaMac98/releases/latest"><img src="https://img.shields.io/github/v/release/Alepha98/CleanAlephaMac98?style=for-the-badge&color=6B4A55&label=Release" alt="Latest release"></a>
+  &nbsp;
+  <a href="https://github.com/Alepha98/CleanAlephaMac98/releases"><img src="https://img.shields.io/github/downloads/Alepha98/CleanAlephaMac98/total?style=for-the-badge&color=C45C6A&label=Downloads" alt="Downloads"></a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-14%2B-black?style=flat-square&logo=apple&logoColor=white" alt="macOS 14+">
   <img src="https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-6B4A55?style=flat-square" alt="Universal">
   <img src="https://img.shields.io/github/license/Alepha98/CleanAlephaMac98?style=flat-square&color=C45C6A" alt="MIT">
+  <a href="https://github.com/Alepha98/CleanAlephaMac98/releases"><img src="https://img.shields.io/github/downloads/Alepha98/CleanAlephaMac98/total?style=flat-square&color=C45C6A&label=downloads" alt="Total downloads"></a>
 </p>
 
 ---
@@ -39,15 +42,13 @@
 
 ## Что умеет
 
-- Кэши браузеров, логи, мессенджеры. Куки и пароли не трогаем.
-- Свои исключения – добавь папку, или с карточки правым кликом: «Не трогать эту папку».
-- Память – кто жрёт RAM и какие вкладки открыты. Браузер не закрываем.
-- Проверка – известный adware и странные агенты. Не антивирус.
-- Автозагрузка – что стартует вместе с тобой.
-- Расписание – свои часы. По таймеру снимаются только кэши, не медиа и не корзина.
-- Telegram находится сам.
-- Colima, Parallels, Gradle, симулятор, DeviceSupport, Claude VM, Photos – не трогаем.
-- Телеметрии нет.
+- Кэши браузеров, логи, мессенджеры
+- Свои исключения – папка или правый клик по карточке
+- Быстродействие – память, CPU, вкладки
+- Проверка – adware и странные агенты
+- Автозагрузка
+- Расписание автоочистки кэшей
+- Без телеметрии
 
 <p align="center">
   <img src="docs/brand/icon.png" width="220" height="220" alt="CleanAlephaMac98">
@@ -65,15 +66,13 @@ Turn on **Full Disk Access** if you want Messages and Telegram in the scan. Brow
 
 ## What it does
 
-- Browser caches, logs, messengers. Cookies and passwords stay.
-- Your exclusions – add a folder, or right-click a card: “Don't touch this folder”.
-- Memory – what's eating RAM, which tabs are open. We don't quit the browser.
-- Check – known adware and odd agents. Not an antivirus.
-- Startup – what launches when you log in.
-- Schedule – your hours. The timer only clears caches, not media, not Trash.
-- Telegram is found on this Mac.
-- Colima, Parallels, Gradle, Simulator, DeviceSupport, Claude VM, Photos – left alone.
-- No telemetry.
+- Browser caches, logs, messengers
+- Your exclusions – add a folder or right-click a card
+- Performance – RAM, CPU, tabs
+- Check – adware and odd agents
+- Startup items
+- Scheduled cache cleanup
+- No telemetry
 
 macOS 14+, Apple Silicon and Intel.
 

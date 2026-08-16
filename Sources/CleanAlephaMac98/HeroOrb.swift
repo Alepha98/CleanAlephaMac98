@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Glass sphere with liquid that occupies a spherical cap — not a rectangular wipe.
@@ -10,17 +11,39 @@ struct HeroOrb: View {
     var size: CGFloat
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var appActive = true
+
+    /// Only animate while work is happening. Idle = one static frame (0% display link).
+    private var shouldAnimate: Bool {
+        appActive && !reduceMotion && (scanning || cleaning)
+    }
 
     var body: some View {
         let level = max(0.06, min(0.94, fill))
-        let interval = reduceMotion ? 1.0 / 8.0 : 1.0 / 30.0
-        let reduced = reduceMotion
-        TimelineView(.animation(minimumInterval: interval, paused: reduced)) { timeline in
-            orbFrame(level: level, t: timeline.date.timeIntervalSinceReferenceDate, reduced: reduced)
+        let interval: Double = scanning ? 1.0 / 16.0 : 1.0 / 12.0
+        Group {
+            if shouldAnimate {
+                TimelineView(.animation(minimumInterval: interval, paused: false)) { timeline in
+                    orbFrame(
+                        level: level,
+                        t: timeline.date.timeIntervalSinceReferenceDate,
+                        reduced: false
+                    )
+                }
+            } else {
+                orbFrame(level: level, t: 0, reduced: true)
+            }
         }
         .frame(width: size, height: size)
         .aspectRatio(1, contentMode: .fit)
         .animation(Motion.level(reduce: reduceMotion), value: fill)
+        .onAppear { appActive = NSApp.isActive }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            appActive = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            appActive = false
+        }
     }
 
     @ViewBuilder

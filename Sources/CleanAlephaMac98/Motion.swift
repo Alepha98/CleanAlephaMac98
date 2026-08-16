@@ -13,6 +13,10 @@ enum Motion {
     static let easeModule: Animation = .easeInOut(duration: 0.12)
     static let easeIntro: Animation = .easeOut(duration: 0.18)
     static let easeDisk: Animation = .easeInOut(duration: 0.40)
+    /// Day ↔ night: longer than micro UI, shorter than orb fill.
+    static let themeCross: Animation = .timingCurve(0.22, 1, 0.36, 1, duration: 0.55)
+    static let themeWashIn: Animation = .easeOut(duration: 0.28)
+    static let themeWashOut: Animation = .easeIn(duration: 0.50)
     static let flyLift: CGFloat = 12
     static let flyUp: Double = 0.36
     static let flyDown: Double = 0.44
@@ -55,65 +59,113 @@ private struct PrimaryButtonBody: View {
     }
 
     var body: some View {
-        configuration.label
+        let label = configuration.label
             .font(F.button())
-            .foregroundStyle(.white)
+            .foregroundStyle(enabled ? Color.white : Color.white.opacity(0.55))
             .frame(minWidth: 176, minHeight: 40)
             .padding(.horizontal, 10)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: enabled
-                                    ? [C.action, C.actionPressed]
-                                    : [C.action.opacity(0.35), C.action.opacity(0.28)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                    RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                        .fill(C.glassHi.opacity(glare))
-                        .mask(
-                            LinearGradient(colors: [.white, .clear], startPoint: .top, endPoint: .center)
-                        )
-                }
-            )
-            .shadow(color: C.glow.opacity(enabled ? (hover ? 1.15 : 1) : 0), radius: hover && enabled ? 12 : 10, y: 4)
-            .focusStroke(radius: S.buttonRadius)
-            .scaleEffect(configuration.isPressed && enabled ? 0.98 : 1)
-            .animation(Motion.easePress, value: configuration.isPressed)
-            .animation(Motion.easeHover, value: hover)
-            .onHover { hovering in
-                hover = hovering && enabled
-                if !enabled {
-                    NSCursor.operationNotAllowed.set()
-                } else {
-                    NSCursor.arrow.set()
-                }
+
+        Group {
+            if #available(macOS 26.0, *) {
+                label
+                    .camGlass(
+                        tint: enabled ? C.action : C.action.opacity(0.35),
+                        interactive: enabled,
+                        shape: .rounded
+                    )
+            } else {
+                label
+                    .background(
+                        ZStack {
+                            RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: enabled
+                                            ? [C.action, C.actionPressed]
+                                            : [C.action.opacity(0.35), C.action.opacity(0.28)],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                            RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                                .fill(C.glassHi.opacity(glare))
+                                .mask(
+                                    LinearGradient(colors: [.white, .clear], startPoint: .top, endPoint: .center)
+                                )
+                        }
+                    )
+                    .shadow(color: C.glow.opacity(enabled ? (hover ? 1.15 : 1) : 0), radius: hover && enabled ? 12 : 10, y: 4)
             }
+        }
+        .focusStroke(radius: S.buttonRadius)
+        .opacity(configuration.isPressed && enabled ? 0.92 : 1)
+        .scaleEffect(configuration.isPressed && enabled ? 0.98 : 1)
+        .animation(Motion.easePress, value: configuration.isPressed)
+        .animation(Motion.easeHover, value: hover)
+        .onHover { hovering in
+            hover = hovering && enabled
+            if !enabled {
+                NSCursor.operationNotAllowed.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+        }
     }
 }
 
 struct QuietButton: ButtonStyle {
     var enabled: Bool = true
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        QuietButtonBody(configuration: configuration, enabled: enabled)
+    }
+}
+
+private struct QuietButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    var enabled: Bool
+    @Environment(\.careChrome) private var careChrome
+
+    var body: some View {
+        let label = configuration.label
             .font(F.button())
-            .foregroundStyle(C.ink.opacity(enabled ? 1 : 0.45))
+            .foregroundStyle(
+                careChrome
+                    ? C.careInk.opacity(enabled ? 1 : 0.45)
+                    : C.ink.opacity(enabled ? 1 : 0.45)
+            )
             .frame(minHeight: 40)
             .padding(.horizontal, S.md)
-            .background(
-                RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                    .fill(enabled ? (configuration.isPressed ? C.paperHover : C.paper) : C.paper.opacity(0.55))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                    .stroke(C.cardStroke, lineWidth: 1)
-            )
-            .focusStroke(radius: S.buttonRadius)
-            .scaleEffect(configuration.isPressed && enabled ? 0.98 : 1)
-            .animation(Motion.easePress, value: configuration.isPressed)
+
+        Group {
+            if #available(macOS 26.0, *) {
+                label
+                    .camGlass(
+                        tint: C.action.opacity(enabled ? (careChrome ? 0.28 : 0.18) : 0.08),
+                        interactive: enabled,
+                        shape: .rounded
+                    )
+            } else {
+                label
+                    .background(
+                        RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                            .fill(
+                                enabled
+                                    ? (careChrome
+                                        ? C.careInk.opacity(configuration.isPressed ? 0.14 : 0.10)
+                                        : (configuration.isPressed ? C.paperHover : C.paper))
+                                    : (careChrome ? C.careInk.opacity(0.06) : C.paper.opacity(0.55))
+                            )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                            .stroke(careChrome ? C.careInk.opacity(0.28) : C.cardStroke, lineWidth: 1)
+                    )
+            }
+        }
+        .focusStroke(radius: S.buttonRadius)
+        .opacity(configuration.isPressed && enabled ? 0.92 : 1)
+        .scaleEffect(configuration.isPressed && enabled ? 0.98 : 1)
+        .animation(Motion.easePress, value: configuration.isPressed)
     }
 }
 
@@ -124,11 +176,24 @@ struct CardPressStyle: ButtonStyle {
             .animation(Motion.easePress, value: configuration.isPressed)
     }
 }
+
 struct GhostButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
+        GhostButtonBody(configuration: configuration)
+    }
+}
+
+private struct GhostButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    @Environment(\.careChrome) private var careChrome
+
+    var body: some View {
         configuration.label
             .font(F.callout())
-            .foregroundStyle(C.secondary.opacity(configuration.isPressed ? 0.7 : 1))
+            .foregroundStyle(
+                (careChrome ? C.careSecondary : C.secondary)
+                    .opacity(configuration.isPressed ? 0.7 : 1)
+            )
             .frame(minHeight: S.hitMin)
             .padding(.horizontal, S.xs)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
@@ -140,21 +205,66 @@ struct GhostButton: ButtonStyle {
 struct DestructiveQuiet: ButtonStyle {
     var enabled: Bool = true
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        DestructiveQuietBody(configuration: configuration, enabled: enabled)
+    }
+}
+
+private struct DestructiveQuietBody: View {
+    let configuration: ButtonStyleConfiguration
+    var enabled: Bool
+
+    var body: some View {
+        let label = configuration.label
             .font(F.button())
             .foregroundStyle(enabled ? C.accentText : C.accentText.opacity(0.40))
             .frame(minWidth: 176, minHeight: 40)
             .padding(.horizontal, 10)
+
+        Group {
+            if #available(macOS 26.0, *) {
+                label
+                    .camGlass(
+                        tint: C.action.opacity(enabled ? 0.28 : 0.10),
+                        interactive: enabled,
+                        shape: .rounded
+                    )
+            } else {
+                label
+                    .background(
+                        RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                            .fill(C.action.opacity(enabled ? (configuration.isPressed ? 0.22 : 0.14) : 0.06))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                            .stroke(C.accentText.opacity(enabled ? 0.35 : 0.12), lineWidth: 1)
+                    )
+            }
+        }
+        .focusStroke(radius: S.buttonRadius)
+        .opacity(configuration.isPressed && enabled ? 0.92 : 1)
+        .scaleEffect(configuration.isPressed && enabled ? 0.98 : 1)
+        .animation(Motion.easePress, value: configuration.isPressed)
+    }
+}
+
+struct BackChromeButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(F.button())
+            .foregroundStyle(C.accentText)
+            .frame(minHeight: 40)
+            .padding(.horizontal, S.md)
             .background(
                 RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                    .fill(C.action.opacity(enabled ? (configuration.isPressed ? 0.22 : 0.14) : 0.06))
+                    .fill(C.paper)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                    .stroke(C.accentText.opacity(enabled ? 0.35 : 0.12), lineWidth: 1)
+                    .stroke(C.action.opacity(configuration.isPressed ? 0.55 : 0.40), lineWidth: 1.5)
             )
+            .shadow(color: C.pillShadow, radius: 6, y: 2)
             .focusStroke(radius: S.buttonRadius)
-            .scaleEffect(configuration.isPressed && enabled ? 0.98 : 1)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(Motion.easePress, value: configuration.isPressed)
     }
 }

@@ -23,37 +23,99 @@ enum AppearanceChoice: String, CaseIterable, Identifiable {
     }
 }
 
+/// Smart Care / sidebar family hues – CMM-adjacent roles, shifted so they’re ours.
+enum CareFamily: String, CaseIterable {
+    case cleanup, protection, performance, applications, clutter, smart, system
+
+    static func of(_ module: Module) -> CareFamily {
+        switch module {
+        case .smart: .smart
+        case .junk, .mail, .trash, .browsers, .messengers: .cleanup
+        case .protect: .protection
+        case .pulse, .startup: .performance
+        case .leftovers, .dev: .applications
+        case .large, .duplicates: .clutter
+        case .space, .tools: .system
+        }
+    }
+
+    /// Highlight / mid / deep for glass washes.
+    var hi: Color {
+        switch self {
+        case .cleanup: Color(red: 0.62, green: 0.90, blue: 0.72)
+        case .protection: Color(red: 0.98, green: 0.78, blue: 0.84)
+        case .performance: Color(red: 1.00, green: 0.74, blue: 0.52)
+        case .applications: Color(red: 0.66, green: 0.74, blue: 0.98)
+        case .clutter: Color(red: 0.58, green: 0.86, blue: 0.88)
+        case .smart: Color(red: 0.96, green: 0.78, blue: 0.86)
+        case .system: Color(red: 0.88, green: 0.80, blue: 0.84)
+        }
+    }
+
+    var mid: Color {
+        switch self {
+        case .cleanup: Color(red: 0.28, green: 0.70, blue: 0.52)
+        case .protection: Color(red: 0.86, green: 0.42, blue: 0.54)
+        case .performance: Color(red: 0.92, green: 0.48, blue: 0.34)
+        case .applications: Color(red: 0.40, green: 0.50, blue: 0.88)
+        case .clutter: Color(red: 0.28, green: 0.64, blue: 0.70)
+        case .smart: Color(red: 0.82, green: 0.40, blue: 0.54)
+        case .system: Color(red: 0.62, green: 0.48, blue: 0.54)
+        }
+    }
+
+    var lo: Color {
+        switch self {
+        case .cleanup: Color(red: 0.10, green: 0.40, blue: 0.30)
+        case .protection: Color(red: 0.58, green: 0.20, blue: 0.32)
+        case .performance: Color(red: 0.68, green: 0.26, blue: 0.18)
+        case .applications: Color(red: 0.20, green: 0.28, blue: 0.58)
+        case .clutter: Color(red: 0.12, green: 0.38, blue: 0.44)
+        case .smart: Color(red: 0.48, green: 0.16, blue: 0.28)
+        case .system: Color(red: 0.36, green: 0.26, blue: 0.30)
+        }
+    }
+
+    var softFill: Color { mid.opacity(0.14) }
+    var softStroke: Color { mid.opacity(0.28) }
+    var glow: Color { mid.opacity(0.40) }
+}
+
 enum C {
     /// Dusty-rose tokens: day from TZ-01 §4.2; night is a plum lab, not #000 invert.
-    static let bgTop = token("bgTop", light: (0.97, 0.93, 0.94), dark: (0.10, 0.06, 0.08))
-    static let bgBot = token("bgBot", light: (0.92, 0.86, 0.88), dark: (0.06, 0.04, 0.06))
-    static let rail = token("rail", light: (0.98, 0.95, 0.96), dark: (0.14, 0.09, 0.11))
-    static let ink = token("ink", light: (0.18, 0.11, 0.14), dark: (0.96, 0.90, 0.92))
-    static let secondary = token("secondary", light: (0.52, 0.42, 0.46), dark: (0.74, 0.60, 0.64))
-    static let hairline = token("hairline", light: (0.88, 0.80, 0.82), dark: (0.32, 0.22, 0.26))
+    static let bgTop = token("bgTop", light: (0.94, 0.88, 0.91), dark: (0.12, 0.06, 0.09))
+    static let bgBot = token("bgBot", light: (0.86, 0.74, 0.80), dark: (0.05, 0.03, 0.05))
+    static let rail = token("rail", light: (0.96, 0.91, 0.93), dark: (0.16, 0.09, 0.12))
+    static let ink = token("ink", light: (0.06, 0.03, 0.05), dark: (0.96, 0.90, 0.92))
+    static let secondary = token("secondary", light: (0.18, 0.09, 0.13), dark: (0.86, 0.76, 0.80))
+    static let hairline = token("hairline", light: (0.82, 0.72, 0.76), dark: (0.32, 0.22, 0.26))
     static let rose = token("rose", light: (0.86, 0.42, 0.54), dark: (0.90, 0.50, 0.60))
     static let roseDeep = token("roseDeep", light: (0.62, 0.24, 0.36), dark: (0.58, 0.20, 0.32))
     static let rosePressed = token("rosePressed", light: (0.74, 0.32, 0.44), dark: (0.78, 0.36, 0.48))
-    static let roseHi = token("roseHi", light: (0.98, 0.78, 0.84), dark: (0.86, 0.58, 0.66))
+    static let roseHi = token("roseHi", light: (0.70, 0.26, 0.40), dark: (0.86, 0.58, 0.66))
     static let warn = token("warn", light: (0.78, 0.28, 0.32), dark: (0.88, 0.46, 0.48))
+    /// Soft veil for dimmed Smart Care tiles while another stage is active.
+    static let dimVeil = token("dimVeil", light: (0.97, 0.93, 0.94, 0.55), dark: (0.06, 0.03, 0.05, 0.55))
+    /// Active Smart Care tile wash.
+    static let careWash = token("careWash", light: (0.96, 0.72, 0.78, 0.55), dark: (0.42, 0.18, 0.26, 0.65))
 
     /// Paper glass — night is dark rose glass, not inverted white.
-    static let paper = token("paper", light: (1, 1, 1, 0.74), dark: (0.20, 0.13, 0.16, 0.82))
-    static let paperHover = token("paperHover", light: (1, 1, 1, 0.92), dark: (0.26, 0.16, 0.20, 0.90))
-    static let pill = token("pill", light: (1, 1, 1, 0.88), dark: (0.28, 0.16, 0.20, 0.92))
-    static let pillHover = token("pillHover", light: (1, 1, 1, 0.40), dark: (0.24, 0.14, 0.18, 0.55))
-    static let chip = token("chip", light: (0, 0, 0, 0.05), dark: (1, 0.94, 0.95, 0.08))
-    static let glass = token("glass", light: (1, 1, 1, 0.45), dark: (0.30, 0.18, 0.22, 0.50))
-    static let cardStroke = token("cardStroke", light: (1, 1, 1, 0.88), dark: (0.46, 0.30, 0.34, 0.55))
-    static let iconWell = token("iconWell", light: (0, 0, 0, 0.05), dark: (1, 0.94, 0.95, 0.08))
+    static let paper = token("paper", light: (1, 1, 1, 0.88), dark: (0.20, 0.13, 0.16, 0.82))
+    static let paperHover = token("paperHover", light: (1, 1, 1, 0.96), dark: (0.26, 0.16, 0.20, 0.90))
+    static let pill = token("pill", light: (1, 1, 1, 0.94), dark: (0.28, 0.16, 0.20, 0.92))
+    static let pillHover = token("pillHover", light: (0, 0, 0, 0.06), dark: (0.24, 0.14, 0.18, 0.55))
+    static let chip = token("chip", light: (0, 0, 0, 0.06), dark: (1, 0.94, 0.95, 0.08))
+    static let glass = token("glass", light: (1, 1, 1, 0.55), dark: (0.30, 0.18, 0.22, 0.50))
+    static let cardStroke = token("cardStroke", light: (0.82, 0.70, 0.74, 0.90), dark: (0.46, 0.30, 0.34, 0.55))
+    static let iconWell = token("iconWell", light: (0, 0, 0, 0.06), dark: (1, 0.94, 0.95, 0.08))
     /// Labels on rose (not liquid depth). Night: petal, readable on plum.
-    static let accentText = token("accentText", light: (0.62, 0.24, 0.36), dark: (0.94, 0.70, 0.76))
+    static let accentText = token("accentText", light: (0.36, 0.08, 0.18), dark: (0.94, 0.70, 0.76))
     /// Glass highlights — warm pearl at night, not chalk white.
     static let glassHi = token("glassHi", light: (1, 1, 1), dark: (0.94, 0.86, 0.88))
-    static let cardShadow = token("cardShadow", light: (0.62, 0.24, 0.36, 0.08), dark: (0.02, 0.00, 0.01, 0.55))
-    static let pillShadow = token("pillShadow", light: (0, 0, 0, 0.05), dark: (0, 0, 0, 0.35))
+    static let cardShadow = token("cardShadow", light: (0.62, 0.24, 0.36, 0.10), dark: (0.02, 0.00, 0.01, 0.55))
+    static let pillShadow = token("pillShadow", light: (0, 0, 0, 0.06), dark: (0, 0, 0, 0.35))
     /// Protected disk segment — dusty mauve, not a hole, not mint.
-    static let reserved = token("reserved", light: (0.70, 0.56, 0.58), dark: (0.50, 0.34, 0.38))
+    static let reserved = token("reserved", light: (0.58, 0.40, 0.44), dark: (0.50, 0.34, 0.38))
 
     static let card = paper
     static let action = rose
@@ -62,6 +124,11 @@ enum C {
     static let liquidMid = rose
     static let liquidLo = roseDeep
     static let glow = token("glow", light: (0.86, 0.42, 0.54, 0.28), dark: (0.90, 0.48, 0.58, 0.40))
+
+    /// Smart Care chrome text — deep plum on light wash, white on night.
+    static let careInk = token("careInk", light: (0.08, 0.03, 0.06), dark: (0.98, 0.94, 0.96))
+    static let careSecondary = token("careSecondary", light: (0.20, 0.08, 0.14), dark: (0.90, 0.82, 0.86))
+    static let careMuted = token("careMuted", light: (0.30, 0.14, 0.22), dark: (0.76, 0.66, 0.72))
 
     private static func token(
         _ name: String,
@@ -93,7 +160,7 @@ enum S {
     static let lg: CGFloat = 20
     static let xl: CGFloat = 24
     static let xxl: CGFloat = 32
-    static let sidebar: CGFloat = 228
+    static let sidebar: CGFloat = 276
     static let trafficClearance: CGFloat = 36
     static let cardMin: CGFloat = 236
     static let cardRadius: CGFloat = 18
@@ -135,6 +202,7 @@ struct CardBackground: View {
 
     var body: some View {
         let increased = contrast == .increased
+        // Solid paper — not Liquid Glass. Glass on every result card kept the GPU busy in idle.
         RoundedRectangle(cornerRadius: S.cardRadius, style: .continuous)
             .fill(hover ? C.paperHover : C.paper)
             .overlay(
@@ -259,14 +327,26 @@ extension View {
 struct ProgressCapsule: View {
     var progress: Double
     @Environment(\.copyLang) private var lang
+    @Environment(\.careChrome) private var careChrome
+    @Environment(\.colorScheme) private var scheme
+
+    private var track: Color {
+        guard careChrome else { return C.glass }
+        return scheme == .light ? C.careInk.opacity(0.18) : Color.white.opacity(0.22)
+    }
+
+    private var fill: Color {
+        guard careChrome else { return C.action }
+        return scheme == .light ? C.careInk : Color.white.opacity(0.95)
+    }
 
     var body: some View {
         Capsule()
-            .fill(C.glass)
+            .fill(track)
             .frame(width: 220, height: 6)
             .overlay(alignment: .leading) {
                 Capsule()
-                    .fill(C.action)
+                    .fill(fill)
                     .frame(width: 220 * max(0.08, min(1, progress)))
             }
             .accessibilityLabel(Copy.progress.t(lang))

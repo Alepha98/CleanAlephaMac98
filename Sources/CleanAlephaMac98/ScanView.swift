@@ -6,11 +6,16 @@ struct ScanView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.shellIntro) private var shellIntro
     @Environment(\.copyLang) private var lang
+    @Environment(\.careChrome) private var careChrome
     @Namespace private var orbSpace
     @State private var headerReady = false
     @State private var cardsReady = false
     @State private var flyLift: CGFloat = 0
     @State private var flyGen = 0
+
+    private var titleInk: Color { careChrome ? C.careInk : C.ink }
+    private var bodyInk: Color { careChrome ? C.careSecondary : C.secondary }
+    private var mutedInk: Color { careChrome ? C.careMuted : C.secondary }
 
     private var showingResults: Bool { state.scanFinished && !state.scanning && state.hasScannedCurrent() }
     private var visible: [JunkItem] { state.visibleItems() }
@@ -89,16 +94,7 @@ struct ScanView: View {
         return state.selectedBytes
     }
 
-    private var liveFootnote: String {
-        if state.module == .pulse {
-            if let focus = state.pulseFocus {
-                return "\(Copy.pulseInside.t(lang)) – \(focus)"
-            }
-            return Copy.ramHonest.t(lang)
-        }
-        if state.module.isLiveModule { return state.module.blurb.t(lang) }
-        return Copy.loginsStay.t(lang)
-    }
+    private var liveFootnote: String { "" }
 
     var body: some View {
         GeometryReader { geo in
@@ -107,12 +103,26 @@ struct ScanView: View {
             let compact = geo.size.height < 600
             let hPad = geo.size.width < 920 ? S.md : S.xl
             Group {
-                if showingResults {
-                    if showingSmartOverview {
+                if state.module == .smart, state.scanning {
+                    SmartCareBoard(mode: .scanning)
+                        .transition(.opacity)
+                } else if showingResults {
+                    if state.module == .pulse, state.pulseFocus != nil {
+                        PulseFocusPane(hPad: hPad, contentWidth: geo.size.width)
+                            .transition(
+                                reduceMotion
+                                    ? .opacity
+                                    : .asymmetric(
+                                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                                        removal: .move(edge: .leading).combined(with: .opacity)
+                                    )
+                            )
+                    } else if showingSmartOverview {
                         if smartOverviewEmpty {
                             emptyResults(orb: min(big * 0.72, 220), compact: compact, hPad: hPad)
                         } else {
-                            smartOverview(orb: small, hPad: hPad, contentWidth: geo.size.width)
+                            SmartCareBoard(mode: .results)
+                                .transition(.opacity)
                         }
                     } else if isEmptyResults {
                         emptyResults(orb: min(big * 0.72, 220), compact: compact, hPad: hPad)
@@ -123,9 +133,37 @@ struct ScanView: View {
                     home(orb: big, compact: compact)
                 }
             }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if state.canNavigateBack {
+                    HStack(spacing: 12) {
+                        Button(action: state.navigateBack) {
+                            HStack(spacing: 8) {
+                                Text("←")
+                                Text(state.navigateBackLabel)
+                            }
+                        }
+                        .buttonStyle(BackChromeButton())
+                        .keyboardShortcut(.escape, modifiers: [])
+                        .accessibilityLabel(state.navigateBackLabel)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, hPad)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
+                    .background {
+                        if state.module == .smart {
+                            Color.clear
+                        } else {
+                            C.bgTop.opacity(0.92)
+                        }
+                    }
+                }
+            }
             .animation(layoutAnimation, value: showingResults)
             .animation(layoutAnimation, value: isEmptyResults)
             .animation(layoutAnimation, value: showingSmartOverview)
+            .animation(layoutAnimation, value: state.pulseFocus)
+            .animation(layoutAnimation, value: state.canNavigateBack)
             .frame(width: geo.size.width, height: geo.size.height)
         }
         .onAppear { syncReveal(showingResults) }
@@ -187,13 +225,13 @@ struct ScanView: View {
             VStack(spacing: 6) {
                 Text(homeTitle)
                     .font(F.largeTitle(compact: compact))
-                    .foregroundStyle(C.ink)
+                    .foregroundStyle(titleInk)
                     .multilineTextAlignment(.center)
                     .id("title-\(state.module.id)-\(state.scanning)")
                     .transition(.opacity)
                 Text(homeSubtitle)
                     .font(F.body())
-                    .foregroundStyle(C.secondary)
+                    .foregroundStyle(bodyInk)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, S.xxl)
                     .id("sub-\(state.module.id)-\(state.scanning)-\(state.status.ru)")
@@ -239,7 +277,7 @@ struct ScanView: View {
                             Button(action: state.openFDA) {
                                 Text(Copy.needFDAQuiet.t(lang))
                                     .font(F.callout())
-                                    .foregroundStyle(C.secondary)
+                                    .foregroundStyle(mutedInk)
                                     .multilineTextAlignment(.center)
                             }
                             .buttonStyle(.plain)
@@ -281,7 +319,7 @@ struct ScanView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(Copy.canClean.t(lang))
                         .font(F.callout())
-                        .foregroundStyle(C.secondary)
+                        .foregroundStyle(Color.white.opacity(0.72))
                     ZStack(alignment: .leading) {
                         Text(ByteFormat.widthReserve)
                             .font(F.heroSize())
@@ -289,7 +327,7 @@ struct ScanView: View {
                             .accessibilityHidden(true)
                         Text(ByteFormat.string(shownBytes, lang))
                             .font(F.heroSize())
-                            .foregroundStyle(C.ink)
+                            .foregroundStyle(Color.white)
                             .contentTransition(.numericText())
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
@@ -297,15 +335,15 @@ struct ScanView: View {
                     if state.foundBytes > state.selectedBytes {
                         Text(Copy.foundLine(state.foundBytes).t(lang))
                             .font(F.callout())
-                            .foregroundStyle(C.secondary)
+                            .foregroundStyle(Color.white.opacity(0.68))
                     }
                     Text(Copy.smartOverview.t(lang))
                         .font(F.callout())
-                        .foregroundStyle(C.accentText)
+                        .foregroundStyle(C.roseHi)
                     if let selectionLine {
                         Text(selectionLine)
                             .font(F.callout())
-                            .foregroundStyle(C.secondary)
+                            .foregroundStyle(Color.white.opacity(0.65))
                     }
                     if let note = state.lastFailureNote {
                         let offerFDA = Copy.offersFDA(note)
@@ -323,7 +361,19 @@ struct ScanView: View {
                 Spacer(minLength: 0)
             }
             .padding(20)
-            .background(CardBackground())
+            .background {
+                RoundedRectangle(cornerRadius: S.cardRadius + 4, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: S.cardRadius + 4, style: .continuous)
+                            .fill(Color.white.opacity(0.10))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: S.cardRadius + 4, style: .continuous)
+                            .stroke(Color.white.opacity(0.28), lineWidth: 1)
+                    )
+                    .shadow(color: Color.black.opacity(0.18), radius: 16, y: 6)
+            }
             .padding(.horizontal, hPad)
             .padding(.top, 18)
             .padding(.bottom, 14)
@@ -334,7 +384,7 @@ struct ScanView: View {
                     ForEach(Array(smartTiles.enumerated()), id: \.element.module.id) { index, tile in
                         let stagger = Motion.stagger(index: index, reduce: reduceMotion)
                         SmartSectionTile(module: tile.module, bytes: tile.bytes) {
-                            state.selectModule(tile.module)
+                            state.openModuleFromSmart(tile.module)
                         }
                         .opacity(cardsReady ? 1 : 0)
                         .animation(
@@ -352,23 +402,25 @@ struct ScanView: View {
 
     @ViewBuilder
     private func resultsActions(narrow: Bool) -> some View {
-        if narrow {
-            VStack(alignment: .leading, spacing: 8) {
-                cleanAction()
-                HStack(spacing: 10) {
+        GlassActions {
+            if narrow {
+                VStack(alignment: .leading, spacing: 8) {
+                    cleanAction()
+                    HStack(spacing: 12) {
+                        if state.cleaning { stopAction() }
+                        rescanAction()
+                        safeAction()
+                        if state.canDeselect { clearAction() }
+                    }
+                }
+            } else {
+                HStack(spacing: 12) {
+                    cleanAction()
                     if state.cleaning { stopAction() }
                     rescanAction()
                     safeAction()
                     if state.canDeselect { clearAction() }
                 }
-            }
-        } else {
-            HStack(spacing: 10) {
-                cleanAction()
-                if state.cleaning { stopAction() }
-                rescanAction()
-                safeAction()
-                if state.canDeselect { clearAction() }
             }
         }
     }
@@ -435,26 +487,10 @@ struct ScanView: View {
                     .accessibilityElement()
                     .accessibilityLabel(orbLabel)
                 VStack(alignment: .leading, spacing: 6) {
-                    if state.module == .pulse, state.pulseFocus != nil {
-                        Button(action: state.closePulseFocus) {
-                            HStack(spacing: 4) {
-                                Text("‹")
-                                Text(Copy.pulseBack.t(lang))
-                            }
-                            .font(F.callout())
-                            .foregroundStyle(C.accentText)
-                        }
-                        .buttonStyle(.plain)
-                        Text(state.pulseFocusTitle)
-                            .font(F.callout())
-                            .foregroundStyle(C.secondary)
-                            .contentTransition(.opacity)
-                    } else {
-                        Text(state.cleaning ? Copy.cleaning.t(lang) : (state.module == .smart ? Copy.canClean.t(lang) : state.module.name.t(lang)))
-                            .font(F.callout())
-                            .foregroundStyle(C.secondary)
-                            .contentTransition(.opacity)
-                    }
+                    Text(state.cleaning ? Copy.cleaning.t(lang) : (state.module == .smart ? Copy.canClean.t(lang) : state.module.name.t(lang)))
+                        .font(F.callout())
+                        .foregroundStyle(C.secondary)
+                        .contentTransition(.opacity)
                     ZStack(alignment: .leading) {
                         Text(ByteFormat.widthReserve)
                             .font(F.heroSize())
@@ -474,9 +510,11 @@ struct ScanView: View {
                             .foregroundStyle(C.secondary)
                             .contentTransition(.numericText())
                     }
-                    Text(liveFootnote)
-                        .font(F.callout())
-                        .foregroundStyle(state.module.isLiveModule ? C.secondary : C.accentText)
+                    if !liveFootnote.isEmpty {
+                        Text(liveFootnote)
+                            .font(F.callout())
+                            .foregroundStyle(state.module.isLiveModule ? C.secondary : C.accentText)
+                    }
                     if state.cleaning {
                         ProgressCapsule(progress: state.progress)
                             .accessibilityLabel(Copy.progressClean.t(lang))
@@ -515,14 +553,6 @@ struct ScanView: View {
             .animation(Motion.easeMicro, value: state.cleaning)
 
             ScrollView {
-                if state.module == .pulse, state.pulseFocus != nil, visible.isEmpty {
-                    Text(Copy.pulseIdle.t(lang))
-                        .font(F.body())
-                        .foregroundStyle(C.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, hPad)
-                        .padding(.bottom, S.md)
-                }
                 LazyVGrid(columns: resultColumns(contentWidth: contentWidth), spacing: 14) {
                     ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
                         let stagger = Motion.stagger(index: index, reduce: reduceMotion)
@@ -541,7 +571,6 @@ struct ScanView: View {
                 }
                 .padding(.horizontal, hPad)
                 .padding(.bottom, S.xl)
-                .animation(layoutAnimation, value: state.pulseFocus)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -559,13 +588,15 @@ struct ScanView: View {
                 .accessibilityLabel(orbLabel)
             Text(emptyTitle)
                 .font(F.largeTitle(compact: compact))
-                .foregroundStyle(C.ink)
+                .foregroundStyle(titleInk)
                 .multilineTextAlignment(.center)
-            Text(emptyDetail)
-                .font(F.body())
-                .foregroundStyle(C.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, hPad)
+            if !emptyDetail.isEmpty {
+                Text(emptyDetail)
+                    .font(F.body())
+                    .foregroundStyle(bodyInk)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, hPad)
+            }
             if let note = state.lastFailureNote {
                 BannerWarn(text: note.t(lang))
                     .padding(.horizontal, hPad)
@@ -607,7 +638,7 @@ struct ScanView: View {
         if justCleanedEmpty {
             return Copy.emptyDetailFreed(state.lastFreed).t(lang)
         }
-        if state.module == .protect { return Copy.protectClearSub.t(lang) }
+        if state.module == .protect { return "" }
         if !state.hasFDA && state.module.suggestsFDA {
             return Copy.emptyFDA.t(lang)
         }
@@ -618,6 +649,258 @@ struct ScanView: View {
     }
 }
 
+/// Full-pane Performance drill – replaces the overview instead of squeezing beside the orb.
+struct PulseFocusPane: View {
+    var hPad: CGFloat
+    var contentWidth: CGFloat
+    @Environment(AppState.self) private var state
+    @Environment(\.copyLang) private var lang
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var items: [JunkItem] { state.visibleItems() }
+
+    private var memoryItems: [JunkItem] { items.filter { $0.id.hasPrefix("pulse-part:") } }
+    private var appItems: [JunkItem] { items.filter { $0.id.hasPrefix("pulse-app-") } }
+    private var procItems: [JunkItem] { items.filter { $0.id.hasPrefix("pulse-child:") } }
+    private var tabItems: [JunkItem] { items.filter { $0.id.hasPrefix("pulse-tab:") } }
+
+    private var hasTabActions: Bool { tabItems.contains { $0.bytes > 0 } }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    if hasTabActions {
+                        Button(Copy.clean.t(lang)) { state.requestClean() }
+                            .buttonStyle(PrimaryButton(enabled: state.canClean))
+                            .disabled(!state.canClean)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                Text(state.pulseFocusTitle)
+                    .font(F.largeTitle(compact: contentWidth < 760))
+                    .foregroundStyle(C.ink)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+                if !state.pulseFocusSubtitle.isEmpty {
+                    Text(state.pulseFocusSubtitle)
+                        .font(F.body())
+                        .foregroundStyle(C.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, hPad)
+            .padding(.top, 20)
+            .padding(.bottom, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(C.bgTop.opacity(0.55))
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if items.isEmpty {
+                        Text(Copy.pulseIdle.t(lang))
+                            .font(F.body())
+                            .foregroundStyle(C.secondary)
+                            .padding(.top, S.md)
+                    }
+                    section(Copy.sectionMemory, memoryItems)
+                    section(Copy.sectionApps, appItems)
+                    section(Copy.sectionTabs, tabItems)
+                    section(Copy.sectionProcs, procItems)
+                }
+                .padding(.horizontal, hPad)
+                .padding(.top, S.md)
+                .padding(.bottom, S.xxl)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            LinearGradient(colors: [C.bgTop, C.bgBot], startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+        )
+    }
+
+    @ViewBuilder
+    private func section(_ title: Line, _ rows: [JunkItem]) -> some View {
+        if !rows.isEmpty {
+            Text(title.t(lang).uppercased())
+                .font(F.micro())
+                .tracking(0.6)
+                .foregroundStyle(C.secondary.opacity(0.85))
+                .padding(.top, 8)
+                .padding(.bottom, 2)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(rows) { item in
+                PulseDetailRow(item: item)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+    }
+}
+
+struct PulseDetailRow: View {
+    let item: JunkItem
+    @Environment(AppState.self) private var state
+    @Environment(\.copyLang) private var lang
+    @State private var hover = false
+    @State private var busyAction = false
+
+    private var emptied: Bool { item.bytes <= 0 }
+    private var isApp: Bool { item.id.hasPrefix("pulse-app-") }
+    private var isTab: Bool { item.id.hasPrefix("pulse-tab:") }
+    private var isChild: Bool { item.id.hasPrefix("pulse-child:") }
+    private var isPart: Bool { item.id.hasPrefix("pulse-part:") }
+
+    private var appName: String? { LiveProbe.appName(from: item) }
+
+    private var metric: String {
+        if emptied { return Copy.emptied.t(lang) }
+        if state.pulseFocus == LiveProbe.pulseFocusCPU || isChild || isApp {
+            if let cpu = cpuPercent() {
+                return "\(ByteFormat.string(item.bytes, lang)) · \(String(format: "%.0f%%", cpu)) CPU"
+            }
+        }
+        return ByteFormat.string(item.bytes, lang)
+    }
+
+    private func cpuPercent() -> Double? {
+        guard let snap = state.pulse else { return nil }
+        if item.id.hasPrefix("pulse-app-") {
+            let name = String(item.id.dropFirst("pulse-app-".count))
+            return snap.apps.first { $0.name == name }?.cpu
+        }
+        if item.id.hasPrefix("pulse-child:") {
+            let parts = item.id.split(separator: ":", maxSplits: 3, omittingEmptySubsequences: false)
+            guard parts.count >= 3, let pid = Int32(parts[2]) else { return nil }
+            let app = String(parts[1])
+            return snap.apps.first { $0.name == app }?.children.first { $0.pid == pid }?.cpu
+        }
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(C.iconWell)
+                    CamIcon(glyph: emptied ? .check : Glyph(item: item), size: 16)
+                        .foregroundStyle(emptied ? C.secondary : C.accentText)
+                }
+                .frame(width: 32, height: 32)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title.t(lang))
+                        .font(F.title())
+                        .foregroundStyle(emptied ? C.secondary : C.ink)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !item.subtitle.t(lang).isEmpty {
+                        Text(item.subtitle.t(lang))
+                            .font(F.callout())
+                            .foregroundStyle(C.secondary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 8)
+                Text(metric)
+                    .font(F.size())
+                    .foregroundStyle(C.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.trailing)
+            }
+
+            if !emptied {
+                GlassActions {
+                    FlowActions {
+                        if isTab {
+                            quietAction(Copy.showTab.t(lang)) {
+                                await Background.run { LiveProbe.revealTab(item: item) }
+                            }
+                            primaryAction(Copy.closeTabNow.t(lang)) {
+                                let ok = await Background.run { LiveProbe.closeTab(item: item) }
+                                if ok {
+                                    await MainActor.run { state.markClosed(item.id) }
+                                }
+                            }
+                            Button {
+                                state.toggle(item.id)
+                            } label: {
+                                Text(item.selected ? Copy.selectedOn.t(lang) : Copy.selectedOff.t(lang))
+                            }
+                            .buttonStyle(GhostButton())
+                            .disabled(busyAction)
+                        } else if isApp, let name = appName {
+                            primaryAction(Copy.pulseInside.t(lang)) {
+                                await MainActor.run { state.openPulseApp(name) }
+                            }
+                            quietAction(Copy.openApp.t(lang)) {
+                                await MainActor.run { LiveProbe.activateApp(named: name) }
+                            }
+                            if LiveProbe.canQuitApp(named: name) {
+                                quietAction(Copy.quitApp.t(lang)) {
+                                    _ = await MainActor.run { LiveProbe.quitApp(named: name) }
+                                }
+                            }
+                        } else if isChild, let name = appName {
+                            quietAction(Copy.openApp.t(lang)) {
+                                await MainActor.run { LiveProbe.activateApp(named: name) }
+                            }
+                            if !Copy.isSystemProc(name) {
+                                quietAction(Copy.pulseInside.t(lang)) {
+                                    await MainActor.run { state.openPulseApp(name) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(S.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(emptied ? 0.62 : 1)
+        .background(CardBackground(selected: item.selected && isTab && !emptied, hover: hover))
+        .focusStroke(radius: S.cardRadius)
+        .onHover { hover = $0 && !emptied }
+        .animation(Motion.easeHover, value: hover)
+    }
+
+    private func runAction(_ work: @escaping @Sendable () async -> Void) {
+        guard !busyAction else { return }
+        busyAction = true
+        Task {
+            await work()
+            await MainActor.run { busyAction = false }
+        }
+    }
+
+    private func quietAction(_ title: String, work: @escaping @Sendable () async -> Void) -> some View {
+        Button(title) { runAction(work) }
+            .buttonStyle(QuietButton(enabled: !busyAction))
+            .disabled(busyAction || state.isBusy)
+    }
+
+    private func primaryAction(_ title: String, work: @escaping @Sendable () async -> Void) -> some View {
+        Button(title) { runAction(work) }
+            .buttonStyle(PrimaryButton(enabled: !busyAction))
+            .disabled(busyAction || state.isBusy)
+    }
+}
+
+/// Horizontal row of action buttons on a detail card.
+private struct FlowActions<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            content()
+            Spacer(minLength: 0)
+        }
+    }
+}
+
 struct SmartSectionTile: View {
     let module: Module
     let bytes: Int64
@@ -625,47 +908,70 @@ struct SmartSectionTile: View {
     @Environment(\.copyLang) private var lang
     @State private var hover = false
 
+    private var fam: CareFamily { CareFamily.of(module) }
+
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(hover ? C.action.opacity(0.18) : C.iconWell)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(fam.mid.opacity(hover ? 0.28 : 0.18))
                         CamIcon(glyph: Glyph(module: module), size: 16)
-                            .foregroundStyle(hover ? C.accentText : C.secondary)
+                            .foregroundStyle(Color.white.opacity(0.92))
                     }
-                    .frame(width: 28, height: 28)
-                    Spacer()
+                    .frame(width: 30, height: 30)
+                    Spacer(minLength: 0)
                     Text(bytes > 0 ? ByteFormat.string(bytes, lang) : Copy.layerClean.t(lang))
                         .font(F.size())
-                        .foregroundStyle(C.secondary)
+                        .foregroundStyle(Color.white.opacity(0.78))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
                 Text(module.name.t(lang))
                     .font(F.title())
-                    .foregroundStyle(C.ink)
+                    .foregroundStyle(Color.white.opacity(0.95))
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 Text(module.blurb.t(lang))
                     .font(F.callout())
-                    .foregroundStyle(C.secondary)
+                    .foregroundStyle(Color.white.opacity(0.68))
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 HStack(spacing: 6) {
                     Text(Copy.openLayer.t(lang))
                         .font(F.callout())
-                        .foregroundStyle(C.accentText)
+                        .foregroundStyle(C.roseHi)
                     Spacer()
                     Text("›")
                         .font(F.title())
-                        .foregroundStyle(C.secondary.opacity(0.7))
+                        .foregroundStyle(Color.white.opacity(0.55))
                 }
             }
             .padding(S.md)
             .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
-            .background(CardBackground(selected: false, hover: hover))
+            .background {
+                RoundedRectangle(cornerRadius: S.cardRadius, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: S.cardRadius, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(hover ? 0.16 : 0.10),
+                                        fam.mid.opacity(0.12)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: S.cardRadius, style: .continuous)
+                            .stroke(Color.white.opacity(hover ? 0.35 : 0.22), lineWidth: 1)
+                    )
+                    .shadow(color: Color.black.opacity(0.16), radius: hover ? 14 : 10, y: 5)
+            }
             .focusStroke(radius: S.cardRadius)
         }
         .buttonStyle(CardPressStyle())
@@ -745,11 +1051,13 @@ struct ResultCard: View {
                     .foregroundStyle(emptied || muted ? C.secondary : C.ink)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                Text(item.subtitle.t(lang))
-                    .font(F.callout())
-                    .foregroundStyle(C.secondary.opacity(muted || emptied ? 0.75 : 1))
-                    .lineLimit(emptied ? 1 : 3)
-                    .multilineTextAlignment(.leading)
+                if !item.subtitle.t(lang).isEmpty {
+                    Text(item.subtitle.t(lang))
+                        .font(F.callout())
+                        .foregroundStyle(C.secondary.opacity(muted || emptied ? 0.75 : 1))
+                        .lineLimit(emptied ? 1 : 3)
+                        .multilineTextAlignment(.leading)
+                }
                 HStack(spacing: 6) {
                     if emptied {
                         MicroBadge(text: Copy.emptied.t(lang), tone: .quiet)
@@ -792,12 +1100,17 @@ struct ResultCard: View {
                 }
             }
             if item.id.hasPrefix("pulse-app-") {
+                let name = String(item.id.dropFirst("pulse-app-".count))
                 Button(Copy.pulseInside.t(lang)) {
-                    let name = String(item.id.dropFirst("pulse-app-".count))
                     state.openPulseApp(name)
                 }
                 Button(Copy.openApp.t(lang)) {
-                    Task { @MainActor in LiveProbe.activateApp(item: item) }
+                    Task { @MainActor in LiveProbe.activateApp(named: name) }
+                }
+                if LiveProbe.canQuitApp(named: name) {
+                    Button(Copy.quitApp.t(lang)) {
+                        Task { @MainActor in _ = LiveProbe.quitApp(named: name) }
+                    }
                 }
             }
             if FinderReveal.canShow(item.url), !item.module.isLiveModule {
@@ -939,6 +1252,7 @@ struct SpaceView: View {
         .padding(.vertical, compact ? S.lg : S.xxl)
         .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .scrollContentBackground(.hidden)
         }
         .onAppear { state.requestProtectedMeasure() }
     }
@@ -947,7 +1261,6 @@ struct SpaceView: View {
         DiskRing(used: usedFrac, reserved: reservedFrac, size: size)
             .accessibilityElement()
             .accessibilityLabel(Copy.diskA11y(used: ordinaryUsed, reserved: reservedBytes, free: vol.free).t(lang))
-            .help(Copy.ringNote.t(lang))
     }
 
     private func diskLegend() -> some View {
@@ -959,12 +1272,6 @@ struct SpaceView: View {
                 value: state.protectedMeasured ? ByteFormat.string(reservedBytes, lang) : Copy.counting.t(lang)
             )
             DiskLegendRow(color: C.glass, title: Copy.free.t(lang), value: ByteFormat.string(vol.free, lang))
-            Text(Copy.ringNote.t(lang))
-                .font(F.micro())
-                .tracking(0.6)
-                .foregroundStyle(C.secondary.opacity(0.85))
-                .padding(.top, 4)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -1187,6 +1494,7 @@ struct ToolsView: View {
         .padding(.vertical, compact ? S.lg : S.xxl)
         .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .scrollContentBackground(.hidden)
         }
         .onAppear {
             refreshCap()

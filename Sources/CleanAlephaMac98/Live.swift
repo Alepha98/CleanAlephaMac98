@@ -159,14 +159,7 @@ enum LiveProbe {
             let swap = Copy.swapLine(snap.swap)
             ramSub = Line(ru: "\(ramSub.ru). \(swap.ru)", en: "\(ramSub.en). \(swap.en)")
         }
-        ramSub = Line(
-            ru: "\(ramSub.ru). \(Copy.tapForBreakdown.ru)",
-            en: "\(ramSub.en). \(Copy.tapForBreakdown.en)"
-        )
-        let cpuSub = Line(
-            ru: "\(Copy.cpuLine(busy: snap.cpuBusy, load: snap.loadAvg).ru). \(Copy.tapForBreakdown.ru)",
-            en: "\(Copy.cpuLine(busy: snap.cpuBusy, load: snap.loadAvg).en). \(Copy.tapForBreakdown.en)"
-        )
+        let cpuSub = Copy.cpuLine(busy: snap.cpuBusy, load: snap.loadAvg)
         var rows: [JunkItem] = [
             JunkItem(
                 id: "pulse-ram",
@@ -235,24 +228,17 @@ enum LiveProbe {
         }
         for app in overview.prefix(20) {
             let tabHint = browserNames.contains(app.name)
-            let sys = Copy.systemProcHint(app.name)
             let base = Copy.appPerfHint(
                 ram: app.bytes,
                 cpu: app.cpu,
                 parts: app.children.count,
                 browser: tabHint
             )
-            let sub: Line
-            if let sys {
-                sub = Line(ru: "\(base.ru) \(sys.ru)", en: "\(base.en) \(sys.en)")
-            } else {
-                sub = base
-            }
             rows.append(JunkItem(
                 id: "pulse-app-\(app.name)",
                 module: .pulse,
-                title: Line.proper(Copy.systemProcTitle(app.name) ?? app.name),
-                subtitle: sub,
+                title: Copy.humanAppTitle(app.name),
+                subtitle: base,
                 url: home,
                 bytes: max(app.bytes, 1),
                 selected: false,
@@ -260,15 +246,12 @@ enum LiveProbe {
                 keepsLogins: false
             ))
             for child in app.children.prefix(24) {
-                let childTitle = friendlyHelperTitle(child.label, app: app.name)
-                var childSub = Copy.procPerfHint(ram: child.bytes, cpu: child.cpu, pid: child.pid)
-                if let role = Copy.helperRoleHint(child.label) {
-                    childSub = Line(ru: "\(role.ru). \(childSub.ru)", en: "\(role.en). \(childSub.en)")
-                }
+                let childTitle = Copy.humanHelperTitle(label: child.label, app: app.name)
+                let childSub = Copy.procPerfHint(ram: child.bytes, cpu: child.cpu, pid: child.pid)
                 rows.append(JunkItem(
                     id: "pulse-child:\(app.name):\(child.pid):\(child.label)",
                     module: .pulse,
-                    title: Line.proper(childTitle),
+                    title: childTitle,
                     subtitle: childSub,
                     url: home,
                     bytes: max(child.bytes, 1),
@@ -280,17 +263,6 @@ enum LiveProbe {
         }
         CamLog.line("pulse junk overview=\(overview.prefix(20).count) used=\(snap.used) cpu=\(Int(snap.cpuBusy))")
         return rows
-    }
-
-    private static func friendlyHelperTitle(_ label: String, app: String) -> String {
-        let l = label.lowercased()
-        if l.contains("renderer") || l.contains("webcontent") { return "\(app) · renderer / страница" }
-        if l.contains("gpu") { return "\(app) · GPU" }
-        if l.contains("network") { return "\(app) · сеть" }
-        if l.contains("plugin") { return "\(app) · plugin" }
-        if l.contains("helper") { return "\(app) · helper" }
-        if label == app { return app }
-        return "\(app) · \(label)"
     }
 
     private static let browserNames: Set<String> = [
@@ -305,14 +277,12 @@ enum LiveProbe {
         snap.tabs.map { tab in
             let host: String
             if let url = URL(string: tab.url), let h = url.host { host = h } else { host = tab.url }
+            let page = tab.title.isEmpty ? host : tab.title
             return JunkItem(
                 id: "pulse-tab:\(tab.window):\(tab.tabIndex):\(tab.browser)",
                 module: .pulse,
-                title: Line.proper(tab.title.isEmpty ? host : tab.title),
-                subtitle: Line(
-                    ru: "\(tab.browser) · \(host). \(Copy.tabRamHint.ru)",
-                    en: "\(tab.browser) · \(host). \(Copy.tabRamHint.en)"
-                ),
+                title: Copy.humanTabTitle(browser: tab.browser, page: page),
+                subtitle: Copy.humanTabSubtitle(browser: tab.browser, host: host),
                 url: URL(string: tab.url) ?? FileManager.default.homeDirectoryForCurrentUser,
                 bytes: max(tab.estimate, 1),
                 selected: false,
@@ -405,6 +375,36 @@ enum LiveProbe {
             NSWorkspace.shared.open(URL(fileURLWithPath: path))
             return
         }
+    }
+
+    static func canQuitApp(named name: String) -> Bool {
+        !Copy.isSystemProc(name)
+    }
+
+    @MainActor
+    static func quitApp(named name: String) -> Bool {
+        guard canQuitApp(named: name) else { return false }
+        let apps = NSWorkspace.shared.runningApplications.filter {
+            $0.localizedName == name && $0.activationPolicy == .regular
+        }
+        guard !apps.isEmpty else { return false }
+        var any = false
+        for app in apps {
+            if app.terminate() { any = true }
+        }
+        return any
+    }
+
+    @MainActor
+    static func appName(from item: JunkItem) -> String? {
+        if item.id.hasPrefix("pulse-app-") {
+            return String(item.id.dropFirst("pulse-app-".count))
+        }
+        if item.id.hasPrefix("pulse-child:") {
+            let parts = item.id.split(separator: ":", maxSplits: 3, omittingEmptySubsequences: false)
+            if parts.count >= 2 { return String(parts[1]) }
+        }
+        return nil
     }
 
     private static func bundleId(forAppName name: String) -> String {

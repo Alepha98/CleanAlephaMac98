@@ -3,10 +3,10 @@ import SwiftUI
 /// Custom 24px optical set (TZ-01 §4.6). Line 1.5, round caps, cold metal stroke.
 /// Color comes from `foregroundStyle` — night is the same marks on plum, not invert.
 enum Glyph: Equatable, Sendable {
-    case smart, junk, mail, trash, leftovers, large, browsers, dev, messengers, space, tools
+    case smart, junk, mail, trash, leftovers, large, duplicates, browsers, dev, messengers, space, tools
     case pulse, protect, startup
     case film, archive, pdf, photo, paint
-    case lock, check, warn, selectOn, selectOff, sun, moon
+    case lock, check, warn, selectOn, selectOff, sun, moon, dayNight
 
     init(module: Module) {
         switch module {
@@ -16,6 +16,7 @@ enum Glyph: Equatable, Sendable {
         case .trash: self = .trash
         case .leftovers: self = .leftovers
         case .large: self = .large
+        case .duplicates: self = .duplicates
         case .browsers: self = .browsers
         case .dev: self = .dev
         case .messengers: self = .messengers
@@ -148,6 +149,14 @@ private enum GlyphDraw {
                 with: .foreground,
                 style: StrokeStyle(lineWidth: line, lineCap: .round, lineJoin: .round, dash: [sc(2.1), sc(1.7)])
             )
+
+        case .duplicates:
+            strokePath { p in
+                round(&p, CGRect(pt(5.2, 5.2), pt(15.6, 17.8)), radius: sc(1.6))
+            }
+            strokePath { p in
+                round(&p, CGRect(pt(8.4, 6.8), pt(18.8, 19.4)), radius: sc(1.6))
+            }
 
         case .large, .pdf:
             strokePath { p in
@@ -391,8 +400,21 @@ private enum GlyphDraw {
             }
 
         case .moon:
+            // SF-style solid crescent: outer disk minus offset disk (even-odd).
+            // Centers far apart so the bite is a fat moon, not a Venn ring.
+            var crescent = Path()
+            crescent.addEllipse(in: CGRect(center: pt(11.0, 12.0), radius: sc(8.0)))
+            crescent.addEllipse(in: CGRect(center: pt(16.2, 10.2), radius: sc(6.6)))
+            ctx.fill(crescent, with: .foreground, style: FillStyle(eoFill: true))
+
+        case .dayNight:
             strokePath { p in
-                p.addArc(center: pt(11.2, 12), radius: sc(6.6), startAngle: .degrees(55), endAngle: .degrees(305), clockwise: false)
+                p.addEllipse(in: CGRect(center: pt(12, 12), radius: sc(7)))
+            }
+            fillPath { p in
+                p.move(to: pt(12, 5))
+                p.addArc(center: pt(12, 12), radius: sc(7), startAngle: .degrees(-90), endAngle: .degrees(90), clockwise: false)
+                p.closeSubpath()
             }
         }
     }

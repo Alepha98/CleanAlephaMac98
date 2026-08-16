@@ -92,8 +92,8 @@ enum Copy {
     static let foundLabel = Line(ru: "найдено", en: "found")
 
     static let idleHint = Line(
-        ru: "Нажми «Сканировать». Кэши, логи, мессенджеры. Логины Safari и Chrome не трогаем.",
-        en: "Press Scan. Caches, logs, messengers. Safari and Chrome logins stay."
+        ru: "Нажми «Сканировать».",
+        en: "Press Scan."
     )
     static let layerUnscanned = Line(ru: "Этот слой ещё не сканировали.", en: "Haven't scanned this yet.")
     static let foldersClean = Line(ru: "В открытых папках чисто.", en: "Those folders are clean.")
@@ -114,10 +114,6 @@ enum Copy {
     static let used = Line(ru: "Занято", en: "Used")
     static let free = Line(ru: "Свободно", en: "Free")
     static let total = Line(ru: "Всего", en: "Total")
-    static let ringNote = Line(
-        ru: "Защищённые папки – отдельный кусок кольца, не дыра.",
-        en: "Protected folders are a slice of the ring, not a hole."
-    )
 
     static let toolsTitle = Line(ru: "Обслуживание", en: "Maintenance")
     static let toolsLead = Line(
@@ -164,10 +160,31 @@ enum Copy {
     static let appearanceMenu = Line(ru: "Оформление", en: "Appearance")
     static let languageMenu = Line(ru: "Язык", en: "Language")
     static let cleanMenu = Line(ru: "Очистка", en: "Clean")
+    static let menuFile = Line(ru: "Файл", en: "File")
+    static let menuSections = Line(ru: "Разделы", en: "Sections")
+    static let menuEdit = Line(ru: "Правка", en: "Edit")
+    static let careCleanup = Line(ru: "Очистка", en: "Cleanup")
+    static let careProtection = Line(ru: "Проверка", en: "Protection")
+    static let carePerformance = Line(ru: "Быстродействие", en: "Performance")
+    static let careApps = Line(ru: "Приложения", en: "Applications")
+    static let careClutter = Line(ru: "Мой хлам", en: "My Clutter")
+    static let careLooking = Line(ru: "Смотрю…", en: "Looking…")
+    static let careLookingCleanup = Line(ru: "Смотрю мусор…", en: "Looking for junk…")
+    static let careLookingProtect = Line(ru: "Смотрю угрозы…", en: "Looking for threats…")
+    static let careLookingPerf = Line(ru: "Смотрю нагрузку…", en: "Checking performance…")
+    static let careLookingApps = Line(ru: "Смотрю приложения…", en: "Checking applications…")
+    static let careLookingClutter = Line(ru: "Смотрю хранилище…", en: "Analyzing storage…")
+    static let careWaiting = Line(ru: "Ждёт своей очереди", en: "Waiting its turn")
+    static let careFound = Line(ru: "Нашли", en: "Found")
     static let aboutApp = Line(ru: "О CleanAlephaMac98", en: "About CleanAlephaMac98")
+    static let openGitHub = Line(ru: "Открыть GitHub", en: "Open on GitHub")
+    static let openGitHubHelp = Line(
+        ru: "Репозиторий CleanAlephaMac98 на GitHub",
+        en: "CleanAlephaMac98 repository on GitHub"
+    )
     static let aboutCredits = Line(
-        ru: "Клинер для Mac. Логины Safari и Chrome не трогаем.\nРасписание и исключения – в Обслуживании.",
-        en: "Mac cleaner. Safari and Chrome logins stay.\nSchedule and exclusions live in Maintenance."
+        ru: "Клинер для Mac.\nРасписание и исключения – в Обслуживании.",
+        en: "Mac cleaner.\nSchedule and exclusions live in Maintenance."
     )
     static let northernDay = Line(ru: "Северный день", en: "Northern day")
     static let northernNight = Line(ru: "Северная ночь", en: "Northern night")
@@ -214,49 +231,56 @@ enum Copy {
     static let moduleProtect = Line(ru: "Проверка", en: "Check")
     static let moduleStartup = Line(ru: "Автозагрузка", en: "Startup")
     static let subPulse = Line(
-        ru: "Память, CPU, кто тормозит. Тап по приложению – что внутри.",
-        en: "RAM, CPU, what's slow. Tap an app to see what's inside."
+        ru: "Память, CPU, кто тормозит.",
+        en: "RAM, CPU, what's slow."
     )
     static let subProtect = Line(
-        ru: "Известный adware, PUP и странные агенты. Не антивирус.",
-        en: "Known adware, PUPs, and odd agents. Not an antivirus."
+        ru: "Adware, PUP и странные агенты.",
+        en: "Adware, PUPs, and odd agents."
     )
     static let subStartup = Line(
         ru: "Что стартует вместе с тобой.",
         en: "What launches when you log in."
     )
     static let weDontQuitBrowsers = Line(
-        ru: "Браузер целиком не трогаем. Отметь вкладки – «Очистить» их закроет.",
-        en: "We won't quit the browser. Select tabs – Clean closes them."
+        ru: "Отметь вкладки – «Очистить» их закроет.",
+        en: "Select tabs – Clean closes them."
     )
     static let showTab = Line(ru: "Показать вкладку", en: "Show tab")
     static let closeTabNow = Line(ru: "Закрыть вкладку", en: "Close tab")
-    static let openApp = Line(ru: "Открыть снаружи", en: "Open outside")
-    static let pulseBack = Line(ru: "К списку", en: "Back to list")
-    static let pulseInside = Line(ru: "Что внутри", en: "What's inside")
+    static let openApp = Line(ru: "Открыть приложение", en: "Open app")
+    static let quitApp = Line(ru: "Завершить приложение", en: "Quit app")
+    static let pulseBack = Line(ru: "Назад", en: "Back")
+    static let pulseBackOverview = Line(ru: "К сводке", en: "Back to overview")
+    static let backToSmart = Line(ru: "К умному скану", en: "Back to Smart Scan")
+    static let themeBar = Line(ru: "Оформление", en: "Look")
+    static let pulseInside = Line(ru: "Открыть разбор", en: "Open breakdown")
     static let drillBadge = Line(ru: "внутри", en: "inside")
     static let estimateBadge = Line(ru: "оценка", en: "guess")
     static let tabCloseBadge = Line(ru: "можно закрыть", en: "can close")
     static let openAppBadge = Line(ru: "открыть", en: "open")
     static let recommendBadge = Line(ru: "совет", en: "tip")
+    static let sectionMemory = Line(ru: "Память Mac", en: "Mac memory")
+    static let sectionApps = Line(ru: "Приложения", en: "Apps")
+    static let sectionProcs = Line(ru: "Процессы", en: "Processes")
+    static let sectionTabs = Line(ru: "Вкладки", en: "Tabs")
+    static let pulseRamFocus = Line(ru: "Состав памяти", en: "Memory breakdown")
+    static let pulseCpuFocus = Line(ru: "Кто жрёт CPU", en: "What's eating CPU")
+    static let pulseRamFocusSub = Line(ru: "", en: "")
+    static let pulseCpuFocusSub = Line(ru: "", en: "")
+    static let pulseAppFocusSub = Line(ru: "", en: "")
+    static let pulseSystemProcSub = Line(ru: "", en: "")
+    static let weDontKillHelpers = Line(ru: "", en: "")
     static let needAutomation = Line(
         ru: "macOS не дал прочитать вкладки. В Автоматизации разреши Safari и Chrome.",
         en: "macOS blocked the tabs. Allow Automation for Safari and Chrome."
     )
     static let tabsTitle = Line(ru: "Вкладки", en: "Tabs")
     static let appsTitle = Line(ru: "Кто держит память", en: "What's holding RAM")
-    static let pulseIdle = Line(
-        ru: "Сканируй – память, CPU и кто тормозит Mac.",
-        en: "Scan for RAM, CPU, and what's slowing the Mac."
-    )
-    static let ramHonest = Line(
-        ru: "Сводка по быстродействию. Тап по приложению – разбор внутри. Процессы не убиваем.",
-        en: "Performance overview. Tap an app for a breakdown. We don't kill processes."
-    )
-    static let appRamHint = Line(
-        ru: "Тап – что внутри жрёт память и CPU.",
-        en: "Tap to see what's using RAM and CPU inside."
-    )
+    static let pulseIdle = Line(ru: "Нажми «Сканировать».", en: "Press Scan.")
+    static let pulseReady = Line(ru: "Готово", en: "Ready")
+    static let ramHonest = Line(ru: "Готово", en: "Ready")
+    static let appRamHint = Line(ru: "", en: "")
     static let tabRamHint = Line(
         ru: "Отметь и нажми Очистить – закроем вкладку.",
         en: "Select and press Clean – we'll close the tab."
@@ -268,24 +292,43 @@ enum Copy {
     static let cpuWarn = Line(ru: "CPU загружен", en: "CPU is busy")
     static let cpuCritical = Line(ru: "CPU на пределе", en: "CPU is maxed")
     static let tapForBreakdown = Line(ru: "Тап – из чего это состоит", en: "Tap to see what makes this up")
-    static let memWired = Line(ru: "Wired – занято ядром", en: "Wired – held by the kernel")
-    static let memWiredHint = Line(
-        ru: "Память, которую macOS не выгрузит на диск. Драйверы, ядро, защищённые буферы.",
-        en: "Memory macOS won't page out. Drivers, kernel, locked buffers."
-    )
+    static let memWired = Line(ru: "Wired", en: "Wired")
+    static let memWiredHint = Line(ru: "", en: "")
     static let memCompressed = Line(ru: "Сжатая память", en: "Compressed memory")
-    static let memCompressedHint = Line(
-        ru: "macOS сжал редко нужные страницы в RAM, чтобы не уходить в своп сразу.",
-        en: "macOS compressed cold pages in RAM so it doesn't hit swap right away."
-    )
+    static let memCompressedHint = Line(ru: "", en: "")
     static let memSwap = Line(ru: "Своп на диске", en: "Swap on disk")
-    static let memSwapHint = Line(
-        ru: "Уже выгружено на SSD. Mac тормозит, пока это читается обратно.",
-        en: "Already paged to SSD. The Mac stutters while this is read back."
-    )
-    static let pulseRamFocus = Line(ru: "Состав памяти", en: "Memory breakdown")
-    static let pulseCpuFocus = Line(ru: "Кто жрёт CPU", en: "What's eating CPU")
+    static let memSwapHint = Line(ru: "", en: "")
 
+    static let systemProcNames: Set<String> = [
+        "kernel_task", "WindowServer", "loginwindow", "Dock", "Finder",
+        "SystemUIServer", "cfprefsd", "mds", "mds_stores", "distnoted"
+    ]
+
+    static func isSystemProc(_ name: String) -> Bool {
+        systemProcNames.contains(name)
+    }
+
+    static func humanAppTitle(_ name: String) -> Line {
+        switch name {
+        case "kernel_task":
+            return Line(ru: "Системный процесс · ядро macOS", en: "System process · macOS kernel")
+        case "WindowServer":
+            return Line(ru: "Системный процесс · окна и графика", en: "System process · windows & graphics")
+        case "loginwindow":
+            return Line(ru: "Системный процесс · окно входа", en: "System process · login window")
+        case "Dock":
+            return Line(ru: "Системный процесс · Dock", en: "System process · Dock")
+        case "Finder":
+            return Line(ru: "Системный процесс · Finder", en: "System process · Finder")
+        default:
+            if isSystemProc(name) {
+                return Line(ru: "Системный процесс «\(name)»", en: "System process “\(name)”")
+            }
+            return Line(ru: "Приложение «\(name)»", en: "App “\(name)”")
+        }
+    }
+
+    /// Legacy short label used in a few places.
     static func systemProcTitle(_ name: String) -> String? {
         switch name {
         case "kernel_task": return "kernel_task (ядро macOS)"
@@ -294,37 +337,71 @@ enum Copy {
         }
     }
 
-    static func systemProcHint(_ name: String) -> Line? {
-        switch name {
-        case "kernel_task":
+    static func humanHelperTitle(label: String, app: String) -> Line {
+        let l = label.lowercased()
+        if l.contains("renderer") || l.contains("webcontent") || l.contains("webkit") {
             return Line(
-                ru: "Не программа. Ядро + драйверы + I/O. Убить нельзя – смотри wired/своп.",
-                en: "Not an app. Kernel + drivers + I/O. Can't quit – check wired/swap."
+                ru: "Процесс страницы / вкладки в «\(app)»",
+                en: "Page / tab process in “\(app)”"
             )
-        case "WindowServer":
-            return Line(
-                ru: "Рисует окна, меню, анимации. Растёт от мониторов, HDR, тяжёлого UI.",
-                en: "Draws windows, menus, animation. Grows with displays, HDR, heavy UI."
-            )
-        default:
-            return nil
         }
+        if l.contains("gpu") {
+            return Line(
+                ru: "Процесс отрисовки (GPU) в «\(app)»",
+                en: "GPU / compositing process in “\(app)”"
+            )
+        }
+        if l.contains("network") {
+            return Line(
+                ru: "Сетевой процесс в «\(app)»",
+                en: "Network process in “\(app)”"
+            )
+        }
+        if l.contains("plugin") || l.contains("extension") {
+            return Line(
+                ru: "Процесс расширения в «\(app)»",
+                en: "Extension process in “\(app)”"
+            )
+        }
+        if l.contains("helper") {
+            return Line(
+                ru: "Фоновый помощник «\(app)»",
+                en: "Background helper for “\(app)”"
+            )
+        }
+        if label == app || label.isEmpty {
+            return Line(
+                ru: "Главный процесс «\(app)»",
+                en: "Main process of “\(app)”"
+            )
+        }
+        return Line(
+            ru: "Процесс «\(label)» в приложении «\(app)»",
+            en: "Process “\(label)” in app “\(app)”"
+        )
+    }
+
+    static func humanTabTitle(browser: String, page: String) -> Line {
+        Line(
+            ru: "Вкладка в «\(browser)»: \(page)",
+            en: "Tab in “\(browser)”: \(page)"
+        )
+    }
+
+    static func humanTabSubtitle(browser: String, host: String) -> Line {
+        Line(
+            ru: "\(host) · \(browser)",
+            en: "\(host) · \(browser)"
+        )
+    }
+
+    static func systemProcHint(_ name: String) -> Line? {
+        _ = name
+        return nil
     }
 
     static func helperRoleHint(_ label: String) -> Line? {
-        let l = label.lowercased()
-        if l.contains("renderer") || l.contains("webcontent") {
-            return Line(ru: "Процесс страницы / вкладки", en: "Page / tab process")
-        }
-        if l.contains("gpu") {
-            return Line(ru: "Отрисовка и GPU", en: "Compositing / GPU")
-        }
-        if l.contains("network") {
-            return Line(ru: "Сетевой хелпер", en: "Network helper")
-        }
-        if l.contains("helper") {
-            return Line(ru: "Фоновый хелпер приложения", en: "Background app helper")
-        }
+        _ = label
         return nil
     }
 
@@ -338,29 +415,21 @@ enum Copy {
     static func appPerfHint(ram: Int64, cpu: Double, parts: Int, browser: Bool) -> Line {
         let ramS = ByteFormat.string(ram, .ru)
         let ramE = ByteFormat.string(ram, .en)
-        let extraRu = browser ? " Тап – вкладки и процессы." : " Тап – процессы внутри."
-        let extraEn = browser ? " Tap for tabs and processes." : " Tap for processes inside."
+        _ = browser
         return Line(
-            ru: "\(ramS) RAM · CPU \(String(format: "%.0f", cpu))% · \(parts) шт.\(extraRu)",
-            en: "\(ramE) RAM · CPU \(String(format: "%.0f", cpu))% · \(parts) parts.\(extraEn)"
+            ru: "\(ramS) · CPU \(String(format: "%.0f", cpu))% · \(parts) процессов",
+            en: "\(ramE) · CPU \(String(format: "%.0f", cpu))% · \(parts) processes"
         )
     }
 
     static func procPerfHint(ram: Int64, cpu: Double, pid: Int32) -> Line {
         Line(
-            ru: "\(ByteFormat.string(ram, .ru)) · CPU \(String(format: "%.1f", cpu))% · pid \(pid)",
-            en: "\(ByteFormat.string(ram, .en)) · CPU \(String(format: "%.1f", cpu))% · pid \(pid)"
+            ru: "\(ByteFormat.string(ram, .ru)) в памяти · CPU \(String(format: "%.1f", cpu))%",
+            en: "\(ByteFormat.string(ram, .en)) in RAM · CPU \(String(format: "%.1f", cpu))%"
         )
     }
     static let protectClear = Line(ru: "Типичного adware нет", en: "No typical adware")
-    static let protectClearSub = Line(
-        ru: "Глянули приложения, агенты и hosts. Не полная проверка.",
-        en: "Looked at apps, agents, and hosts. Not a full scan."
-    )
-    static let notAntivirus = Line(
-        ru: "Ищем известный adware и кривые агенты. Не антивирус.",
-        en: "Known adware and odd agents. Not an antivirus."
-    )
+    static let protectClearSub = Line(ru: "", en: "")
     static let knownPUP = Line(ru: "известный мусор", en: "known junk")
     static let knownPUPSupport = Line(ru: "папка известного adware", en: "known adware folder")
     static let knownPUPCache = Line(ru: "кэш известного adware", en: "known adware cache")
@@ -368,13 +437,13 @@ enum Copy {
     static let knownPUPPlugin = Line(ru: "плагин / расширение adware", en: "adware plug-in")
     static let adwareAgent = Line(ru: "агент известного adware", en: "known adware agent")
     static let unsignedAgent = Line(
-        ru: "LaunchAgent без подписи, не из Applications. Сами не трогаем.",
-        en: "Unsigned LaunchAgent, not from Applications. We won't touch it."
+        ru: "LaunchAgent без подписи, не из Applications.",
+        en: "Unsigned LaunchAgent, not from Applications."
     )
     static let hostsTouched = Line(ru: "Файл hosts странный", en: "The hosts file looks off")
     static let hostsTouchedSub = Line(
-        ru: "Лишние редиректы. Открой /etc/hosts сам, мы его не правим.",
-        en: "Extra redirects. Open /etc/hosts yourself, we don't edit it."
+        ru: "Лишние редиректы в /etc/hosts.",
+        en: "Extra redirects in /etc/hosts."
     )
     static let ourAgent = Line(ru: "наш агент", en: "our agent")
     static let appleBadge = Line(ru: "Apple", en: "Apple")
@@ -401,6 +470,7 @@ enum Copy {
     static let moduleJunk = Line(ru: "Системный мусор", en: "System junk")
     static let moduleMail = Line(ru: "Почта", en: "Mail")
     static let moduleTrash = Line(ru: "Корзины", en: "Trash")
+    static let moduleDuplicates = Line(ru: "Дубликаты", en: "Duplicates")
     static let moduleLeftovers = Line(ru: "Остатки приложений", en: "App leftovers")
     static let moduleLarge = Line(ru: "Большие файлы", en: "Large files")
     static let moduleBrowsers = Line(ru: "Браузеры", en: "Browsers")
@@ -410,16 +480,33 @@ enum Copy {
     static let moduleTools = Line(ru: "Обслуживание", en: "Maintenance")
 
     static let subSmart = Line(
-        ru: "Кэш и мусор. Логины Safari и Chrome не трогаем.",
-        en: "Caches and junk. Safari and Chrome logins stay."
+        ru: "Кэш и мусор.",
+        en: "Caches and junk."
     )
     static let subJunk = Line(ru: "Логи и кэши пользователя", en: "User logs and caches")
     static let subMail = Line(ru: "Вложения и кэш Mail", en: "Mail attachments and cache")
-    static let subTrash = Line(ru: "Корзина macOS", en: "macOS Trash")
+    static let subTrash = Line(
+        ru: "Корзина пользователя и корзины на дисках.",
+        en: "User Trash and volume trashes."
+    )
     static let subLeftovers = Line(ru: "Остатки удалённых приложений", en: "Leftovers from deleted apps")
     static let subLarge = Line(ru: "Крупные файлы, по умолчанию выкл", en: "Large files, off by default")
-    static let subBrowsers = Line(ru: "Сетевой кэш. Логины не трогаем.", en: "Network cache. Logins stay.")
-    static let subDev = Line(ru: "npm и кэши редакторов. Gradle и Simulator не трогаем.", en: "npm and editor caches. Not Gradle or Simulator.")
+    static let subDuplicates = Line(
+        ru: "Одинаковые файлы в Загрузках, Документах и на Рабочем столе. По умолчанию выкл.",
+        en: "Identical files in Downloads, Documents, and Desktop. Off by default."
+    )
+    static let trashUser = Line(ru: "Корзина пользователя", en: "User Trash")
+    static let trashUserSub = Line(
+        ru: "Пока не очистили – ещё можно вернуть из Finder.",
+        en: "Until we empty it, Finder can still put items back."
+    )
+    static let trashVolume = Line(ru: "Корзина на диске", en: "Volume Trash")
+    static let dupKeepOne = Line(
+        ru: "Одинаковое содержимое. Оставь один файл, остальные можно убрать.",
+        en: "Same contents. Keep one file, the rest can go."
+    )
+    static let subBrowsers = Line(ru: "Сетевой кэш.", en: "Network cache.")
+    static let subDev = Line(ru: "npm и кэши редакторов.", en: "npm and editor caches.")
     static let subMessengers = Line(ru: "Медиа и история. История выкл.", en: "Media and history. History stays off.")
 
     static func scanning(_ stage: Line) -> Line {
@@ -428,8 +515,8 @@ enum Copy {
 
     static func canClear(_ bytes: Int64) -> Line {
         Line(
-            ru: "Можно снять \(ByteFormat.string(bytes, .ru)). Логины на месте.",
-            en: "Can clear \(ByteFormat.string(bytes, .en)). Logins stay."
+            ru: "Можно снять \(ByteFormat.string(bytes, .ru)).",
+            en: "Can clear \(ByteFormat.string(bytes, .en))."
         )
     }
 
@@ -438,8 +525,8 @@ enum Copy {
             return canClear(selected)
         }
         return Line(
-            ru: "Можно снять \(ByteFormat.string(selected, .ru)) из \(ByteFormat.string(found, .ru)). Логины на месте.",
-            en: "Can clear \(ByteFormat.string(selected, .en)) of \(ByteFormat.string(found, .en)). Logins stay."
+            ru: "Можно снять \(ByteFormat.string(selected, .ru)) из \(ByteFormat.string(found, .ru)).",
+            en: "Can clear \(ByteFormat.string(selected, .en)) of \(ByteFormat.string(found, .en))."
         )
     }
 
@@ -457,8 +544,8 @@ enum Copy {
 
     static func emptyDetailFreed(_ bytes: Int64) -> Line {
         Line(
-            ru: "Снято \(ByteFormat.string(bytes, .ru)). Логины на месте.",
-            en: "Cleared \(ByteFormat.string(bytes, .en)). Logins stay."
+            ru: "Снято \(ByteFormat.string(bytes, .ru)).",
+            en: "Cleared \(ByteFormat.string(bytes, .en))."
         )
     }
 

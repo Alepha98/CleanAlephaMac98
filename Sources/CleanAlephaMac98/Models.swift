@@ -1,7 +1,7 @@
 import Foundation
 
 enum Module: String, CaseIterable, Identifiable, Sendable {
-    case smart, junk, mail, trash, leftovers, large, browsers, dev, messengers
+    case smart, junk, mail, trash, leftovers, large, duplicates, browsers, dev, messengers
     case pulse, protect, startup
     case space, tools
     var id: String { rawValue }
@@ -14,6 +14,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .trash: Copy.moduleTrash
         case .leftovers: Copy.moduleLeftovers
         case .large: Copy.moduleLarge
+        case .duplicates: Copy.moduleDuplicates
         case .browsers: Copy.moduleBrowsers
         case .dev: Copy.moduleDev
         case .messengers: Copy.moduleMessengers
@@ -33,6 +34,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .trash: Copy.subTrash
         case .leftovers: Copy.subLeftovers
         case .large: Copy.subLarge
+        case .duplicates: Copy.subDuplicates
         case .browsers: Copy.subBrowsers
         case .dev: Copy.subDev
         case .messengers: Copy.subMessengers
@@ -45,7 +47,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
 
     var isCleanupModule: Bool {
         switch self {
-        case .smart, .junk, .mail, .trash, .leftovers, .large, .browsers, .dev, .messengers,
+        case .smart, .junk, .mail, .trash, .leftovers, .large, .duplicates, .browsers, .dev, .messengers,
              .pulse, .protect, .startup:
             true
         case .space, .tools:
@@ -91,9 +93,10 @@ struct JunkItem: Identifiable, Equatable, Sendable {
     let kind: CleanKind
     let keepsLogins: Bool
 
-    /// Large files / Telegram history / rebuild caches – quieter when unchecked.
+    /// Large files / Telegram history / rebuild caches / duplicates – quieter when unchecked.
     var isSecondaryRisk: Bool {
         if module == .pulse { return kind == .closeTab || kind == .advice }
+        if module == .duplicates { return true }
         if module == .startup { return kind != .advice }
         if module == .protect { return kind == .advice || id.hasPrefix("unsigned-") }
         if module == .large { return true }

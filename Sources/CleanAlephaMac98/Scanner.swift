@@ -47,12 +47,23 @@ enum Scanner {
 
     /// Already covered by named junk / browser / dev cards — skip duplicate enum ids.
     private static let cachesCoveredElsewhere: Set<String> = [
-        "Homebrew", "CocoaPods", "pip", "ms-playwright", "go-build",
+        "CocoaPods", "pip", "ms-playwright", "go-build",
         "org.swift.swiftpm", "pnpm", "Google", "com.apple.Safari", "com.apple.helpd", "GeoServices"
     ]
 
+    /// Container caches we never list (Photos / analysis / iCloud-adjacent).
+    private static let containerCacheDeny: Set<String> = [
+        "com.apple.photoanalysisd",
+        "com.apple.photolibraryd",
+        "com.apple.Photos",
+        "com.apple.photos.ImageConversionService",
+        "com.apple.CloudDocs.MobileDocumentsFileProvider",
+        "com.apple.bird",
+        "com.apple.mediaanalysisd"
+    ]
+
     enum ScanStage: Int, CaseIterable, Sendable {
-        case junk, mail, trash, leftovers, large, browsers, dev, messengers
+        case junk, mail, trash, leftovers, large, duplicates, browsers, dev, messengers
         func items() -> [JunkItem] {
             switch self {
             case .junk: Scanner.junk()
@@ -60,6 +71,7 @@ enum Scanner {
             case .trash: Scanner.trash()
             case .leftovers: Scanner.leftovers().items
             case .large: Scanner.largeFiles().items
+            case .duplicates: Scanner.duplicates().items
             case .browsers: Scanner.browsers()
             case .dev: Scanner.dev()
             case .messengers: Scanner.messengers()
@@ -73,6 +85,7 @@ enum Scanner {
             case .trash: .trash
             case .leftovers: .leftovers
             case .large: .large
+            case .duplicates: .duplicates
             case .browsers: .browsers
             case .dev: .dev
             case .messengers: .messengers
@@ -87,7 +100,8 @@ enum Scanner {
 
     /// Isolates a stage so one bad folder does not abort the whole scan.
     static func safeItems(for stage: ScanStage) -> StageChunk {
-        autoreleasepool {
+        ScanThrottle.beginWorker()
+        return autoreleasepool {
             var failed = false
             let raw: [JunkItem]
             switch stage {
@@ -99,11 +113,20 @@ enum Scanner {
                 let gathered = largeFiles()
                 raw = gathered.items
                 failed = gathered.failed
+            case .duplicates:
+                let gathered = duplicates()
+                raw = gathered.items
+                failed = gathered.failed
+            case .trash:
+                raw = trash()
             default:
                 raw = stage.items()
             }
+            ScanThrottle.reliefIfNeeded()
+            // Trash: any non-empty bin counts (even small). Others keep the 16KB floor.
+            let minBytes: Int64 = stage == .trash ? 1 : 16_384
             return StageChunk(
-                items: raw.filter { $0.bytes > 16_384 && !Keep.isProtected($0.url) },
+                items: raw.filter { $0.bytes > minBytes && !Keep.isProtected($0.url) },
                 failed: failed
             )
         }
@@ -157,12 +180,135 @@ enum Scanner {
             ("cursor-cache", Line(ru: "Кэш Cursor", en: "Cursor cache"), "Library/Application Support/Cursor/Cache", Line(ru: "Не чаты", en: "Not your chats")),
             ("cursor-gpu", Line(ru: "GPU-кэш Cursor", en: "Cursor GPU cache"), "Library/Application Support/Cursor/GPUCache", Line(ru: "Шейдеры", en: "Shaders")),
             ("cursor-logs", Line(ru: "Логи Cursor", en: "Cursor logs"), "Library/Application Support/Cursor/logs", Line(ru: "Логи редактора", en: "Editor logs")),
-            ("cursor-cacheddata", Line(ru: "Cursor CachedData", en: "Cursor CachedData"), "Library/Application Support/Cursor/CachedData", Line(ru: "Не чаты", en: "Not your chats"))
+            ("cursor-cacheddata", Line(ru: "Cursor CachedData", en: "Cursor CachedData"), "Library/Application Support/Cursor/CachedData", Line(ru: "Не чаты", en: "Not your chats")),
+            ("dl-incomplete", Line(ru: "Недокачанные загрузки", en: "Incomplete downloads"), "Library/Incomplete Downloads", Line(ru: "Оборванные .download / части", en: "Broken .download parts")),
+            ("homebrew-cache", Line(ru: "Кэш Homebrew", en: "Homebrew cache"), "Library/Caches/Homebrew", Line(ru: "Бутылки скачаются снова", en: "Bottles re-download")),
+            ("cursor-shipit", Line(ru: "Обновления Cursor (ShipIt)", en: "Cursor update leftovers"), "Library/Caches/com.todesktop.230313mzl4w4u92.ShipIt", Line(ru: "Старые пакеты обновлений", en: "Old update packages")),
+            ("code-vsix", Line(ru: "Кэш расширений VS Code", en: "VS Code extension cache"), "Library/Application Support/Code/CachedExtensionVSIXs", Line(ru: "Перекачаются при нужде", en: "Re-download if needed")),
+            ("code-cacheddata", Line(ru: "CachedData VS Code", en: "VS Code CachedData"), "Library/Application Support/Code/CachedData", Line(ru: "Не настройки", en: "Not settings")),
+            ("code-cache", Line(ru: "Кэш VS Code", en: "VS Code Cache"), "Library/Application Support/Code/Cache", Line(ru: "Не настройки", en: "Not settings")),
+            ("opencode-cache", Line(ru: "Кэш OpenCode", en: "OpenCode cache"), "Library/Application Support/ai.opencode.desktop/Cache", Line(ru: "Кэш приложения", en: "App cache")),
+            ("cloudkit-cache", Line(ru: "Кэш CloudKit", en: "CloudKit cache"), "Library/Caches/CloudKit", Line(ru: "Пересоберётся. По умолчанию выкл.", en: "Rebuilds. Off by default."))
         ]
-        rows.append(contentsOf: fixed.compactMap { item($0.0, .junk, $0.1, $0.3, $0.2) })
+        rows.append(contentsOf: fixed.compactMap { entry in
+            let selected = entry.0 != "cloudkit-cache"
+            return item(entry.0, .junk, entry.1, entry.3, entry.2, selected: selected)
+        })
         rows.append(contentsOf: enumeratedUserCaches())
         rows.append(contentsOf: enumeratedDotCache())
+        rows.append(contentsOf: enumeratedContainerCaches())
+        rows.append(contentsOf: enumeratedAppSupportCaches())
+        rows.append(contentsOf: oldInstallers())
         return dedupeByURL(rows).sorted { $0.bytes > $1.bytes }
+    }
+
+    /// Walk ~/Library/Containers/*/Data/Library/Caches — big gap vs CleanMyMac-style finds.
+    private static func enumeratedContainerCaches() -> [JunkItem] {
+        let root = home().appendingPathComponent("Library/Containers")
+        let fm = FileManager.default
+        guard let kids = try? fm.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        var out: [JunkItem] = []
+        var n = 0
+        for container in kids {
+            ScanThrottle.tickSync(every: 20, counter: &n)
+            let id = container.lastPathComponent
+            if containerCacheDeny.contains(id) { continue }
+            if id.lowercased().contains("photo") { continue }
+            if id.lowercased().contains("icloud") { continue }
+            let cache = container.appendingPathComponent("Data/Library/Caches")
+            if Keep.isProtected(cache) { continue }
+            guard let item = folderItem(
+                id: "ccache-\(id)",
+                module: .junk,
+                title: Line(ru: "Кэш \(shortBundle(id))", en: "Cache \(shortBundle(id))"),
+                subtitle: Line(ru: "Container cache", en: "Container cache"),
+                url: cache,
+                selected: !id.hasPrefix("com.apple."),
+                kind: .wipeChildren
+            ) else { continue }
+            out.append(item)
+        }
+        return out
+    }
+
+    private static func shortBundle(_ id: String) -> String {
+        if id.count <= 28 { return id }
+        return String(id.suffix(24))
+    }
+
+    /// Application Support/*/Cache|GPUCache|Code Cache|CachedData — Electron apps pile up here.
+    private static func enumeratedAppSupportCaches() -> [JunkItem] {
+        let root = home().appendingPathComponent("Library/Application Support")
+        let fm = FileManager.default
+        guard let apps = try? fm.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        let names = ["Cache", "GPUCache", "Code Cache", "CachedData", "DawnCache", "ShaderCache"]
+        var out: [JunkItem] = []
+        var n = 0
+        for app in apps {
+            ScanThrottle.tickSync(every: 15, counter: &n)
+            let appName = app.lastPathComponent
+            if appName.hasPrefix("com.apple") { continue }
+            if Keep.isProtected(app) { continue }
+            if appName == "Claude" { continue } // VM path protected separately; UI caches listed fixed
+            for leaf in names {
+                let url = app.appendingPathComponent(leaf)
+                guard let item = folderItem(
+                    id: "ascache-\(appName)-\(leaf)",
+                    module: .junk,
+                    title: Line(ru: "\(appName) · \(leaf)", en: "\(appName) · \(leaf)"),
+                    subtitle: Line(ru: "Application Support", en: "Application Support"),
+                    url: url,
+                    selected: true
+                ) else { continue }
+                out.append(item)
+            }
+        }
+        return out
+    }
+
+    /// Old .dmg / .pkg in Downloads (secondary – off by default).
+    private static func oldInstallers() -> [JunkItem] {
+        let root = home().appendingPathComponent("Downloads")
+        let fm = FileManager.default
+        guard let kids = try? fm.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        let cutoff = Date().addingTimeInterval(-30 * 24 * 3600)
+        var out: [JunkItem] = []
+        for url in kids {
+            let ext = url.pathExtension.lowercased()
+            guard ["dmg", "pkg", "iso"].contains(ext) else { continue }
+            guard let rv = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]),
+                  rv.isRegularFile == true,
+                  let size = rv.fileSize,
+                  Int64(size) >= 20_000_000 else { continue }
+            let old = (rv.contentModificationDate ?? .distantPast) < cutoff
+            out.append(JunkItem(
+                id: "installer-\(url.lastPathComponent.hashValue)",
+                module: .junk,
+                title: Line.proper(url.lastPathComponent),
+                subtitle: Line(
+                    ru: old ? "Старый установщик в Загрузках (≥30 дн.)" : "Установщик в Загрузках",
+                    en: old ? "Old installer in Downloads (≥30 days)" : "Installer in Downloads"
+                ),
+                url: url,
+                bytes: Int64(size),
+                selected: false,
+                kind: .deleteItem,
+                keepsLogins: false
+            ))
+        }
+        return out.sorted { $0.bytes > $1.bytes }
     }
 
     /// Walk ~/Library/Caches — one card per folder ≥ 8 MB.
@@ -233,10 +379,156 @@ enum Scanner {
     }
 
     private static func trash() -> [JunkItem] {
-        let url = home().appendingPathComponent(".Trash")
-        let b = DiskSizer.bytes(at: url)
-        guard b > 0 else { return [] }
-        return [JunkItem(id: "trash", module: .trash, title: Line(ru: "Корзина пользователя", en: "User Trash"), subtitle: Line(ru: "Пока не очистили – ещё можно вернуть", en: "Until we empty it, you can still put it back"), url: url, bytes: b, selected: false, kind: .emptyTrash, keepsLogins: false)]
+        var out: [JunkItem] = []
+        let user = home().appendingPathComponent(".Trash")
+        if let item = trashBin(
+            id: "trash-user",
+            title: Copy.trashUser,
+            subtitle: Copy.trashUserSub,
+            url: user
+        ) {
+            out.append(item)
+        }
+
+        let uid = String(getuid())
+        let vols = (try? FileManager.default.contentsOfDirectory(
+            at: URL(fileURLWithPath: "/Volumes"),
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        for vol in vols {
+            // Skip the boot volume alias; user trash already covers Macintosh HD home.
+            let name = vol.lastPathComponent
+            if name == "Macintosh HD" || name == "Recovery" { continue }
+            let bin = vol.appendingPathComponent(".Trashes").appendingPathComponent(uid)
+            if let item = trashBin(
+                id: "trash-vol-\(name)",
+                title: Line(ru: "\(Copy.trashVolume.ru) «\(name)»", en: "\(Copy.trashVolume.en) “\(name)”"),
+                subtitle: Copy.trashUserSub,
+                url: bin
+            ) {
+                out.append(item)
+            }
+        }
+        return out
+    }
+
+    private static func trashBin(id: String, title: Line, subtitle: Line, url: URL) -> JunkItem? {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { return nil }
+        let kids = (try? fm.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: nil,
+            options: []
+        )) ?? []
+        let visible = kids.filter { $0.lastPathComponent != ".DS_Store" }
+        guard !visible.isEmpty else { return nil }
+        var bytes = DiskSizer.trashBytes(at: url)
+        if bytes <= 0 {
+            // Still non-empty – show at least something so we never lie «чисто».
+            bytes = max(Int64(visible.count) * 4_096, 4_096)
+        }
+        return JunkItem(
+            id: id,
+            module: .trash,
+            title: title,
+            subtitle: subtitle,
+            url: url,
+            bytes: bytes,
+            selected: false,
+            kind: .emptyTrash,
+            keepsLogins: false
+        )
+    }
+
+    /// Duplicate files (same size + same sample hash) in Desktop / Documents / Downloads.
+    private static func duplicates() -> Gathered {
+        let roots = [
+            home().appendingPathComponent("Desktop"),
+            home().appendingPathComponent("Documents"),
+            home().appendingPathComponent("Downloads")
+        ]
+        let fm = FileManager.default
+        var bySize: [Int64: [URL]] = [:]
+        var failed = false
+        let minFile: Int64 = 1_048_576 // 1 MB – skip tiny noise
+        for root in roots {
+            guard let en = fm.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .isDirectoryKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else {
+                if fm.fileExists(atPath: root.path) { failed = true }
+                continue
+            }
+            var n = 0
+            for case let url as URL in en {
+                n += 1
+                if n > 40_000 { break }
+                if Keep.isProtected(url) {
+                    en.skipDescendants()
+                    continue
+                }
+                guard let rv = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                      rv.isRegularFile == true,
+                      let size = rv.fileSize,
+                      Int64(size) >= minFile else { continue }
+                bySize[Int64(size), default: []].append(url)
+            }
+        }
+
+        var items: [JunkItem] = []
+        var group = 0
+        for (size, urls) in bySize where urls.count > 1 {
+            var buckets: [String: [URL]] = [:]
+            for url in urls {
+                let sig = fileSignature(url, size: size)
+                buckets[sig, default: []].append(url)
+            }
+            for (_, twins) in buckets where twins.count > 1 {
+                // Keep the oldest path selected=false for all; user picks. Mark all but first as deletable extras.
+                let sorted = twins.sorted { $0.path < $1.path }
+                for (i, url) in sorted.enumerated() where i > 0 {
+                    group += 1
+                    let name = url.lastPathComponent
+                    items.append(JunkItem(
+                        id: "dup-\(group)-\(url.path.hashValue)",
+                        module: .duplicates,
+                        title: Line.proper(name),
+                        subtitle: Line(
+                            ru: "\(Copy.dupKeepOne.ru) \(ByteFormat.string(size, .ru))",
+                            en: "\(Copy.dupKeepOne.en) \(ByteFormat.string(size, .en))"
+                        ),
+                        url: url,
+                        bytes: size,
+                        selected: false,
+                        kind: .deleteItem,
+                        keepsLogins: false
+                    ))
+                }
+            }
+            if items.count > 80 { break }
+        }
+        items.sort { $0.bytes > $1.bytes }
+        return Gathered(items: Array(items.prefix(60)), failed: failed)
+    }
+
+    /// Fast fingerprint: size + prefix/suffix bytes (not cryptographic; enough for cleanup).
+    private static func fileSignature(_ url: URL, size: Int64) -> String {
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return "\(size):\(url.path)" }
+        defer { try? fh.close() }
+        let head = (try? fh.read(upToCount: 64 * 1024)) ?? Data()
+        var tail = Data()
+        if size > 128 * 1024 {
+            try? fh.seek(toOffset: UInt64(size - 64 * 1024))
+            tail = (try? fh.read(upToCount: 64 * 1024)) ?? Data()
+        }
+        var hasher = Hasher()
+        hasher.combine(size)
+        hasher.combine(head)
+        hasher.combine(tail)
+        return "\(size):\(hasher.finalize())"
     }
 
     private static func leftovers() -> Gathered {
