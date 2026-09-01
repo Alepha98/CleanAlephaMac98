@@ -209,7 +209,7 @@ enum DeepScan {
                 let b = DiskSizer.bytes(at: url)
                 guard b >= minBytes else { continue }
                 out.append(JunkItem(
-                    id: "gcache-\(id)-\(url.path.hashValue)",
+                    id: "gcache-\(id)-\(stableHash(url.path))",
                     module: .junk,
                     title: Line(ru: "Group · \(short(id))", en: "Group · \(short(id))"),
                     subtitle: Line(ru: "Group Containers / Caches", en: "Group Containers / Caches"),
@@ -506,5 +506,13 @@ enum DeepScan {
     private static func short(_ id: String) -> String {
         if id.count <= 32 { return id }
         return "…" + String(id.suffix(28))
+    }
+
+    /// Process-stable id source. `String.hashValue` is seeded per launch, so it must not
+    /// feed a persisted id (breaks `Keep.dismissedIds`). djb2 over UTF-8 is deterministic.
+    private static func stableHash(_ s: String) -> String {
+        var hash: UInt64 = 5381
+        for byte in s.utf8 { hash = (hash &* 33) ^ UInt64(byte) }
+        return String(hash, radix: 36)
     }
 }
