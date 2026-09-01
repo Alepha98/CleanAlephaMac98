@@ -63,9 +63,8 @@ enum DuplicateFinder {
                 continue
             }
             for case let url as URL in en {
-                n += 1
+                ScanThrottle.tickSync(every: 500, counter: &n) // owns the counter (increments once)
                 if n > config.enumerateCap { break }
-                ScanThrottle.tickSync(every: 500, counter: &n)
                 if Keep.isProtected(url) { en.skipDescendants(); continue }
                 guard let rv = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
                       rv.isRegularFile == true,
