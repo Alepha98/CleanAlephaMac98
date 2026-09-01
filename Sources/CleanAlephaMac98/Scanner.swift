@@ -775,6 +775,7 @@ enum Scanner {
             item("pnpm", .dev, Line.proper("pnpm cache"), Line.proper("Library/Caches/pnpm"), "Library/Caches/pnpm")
         ].compactMap { $0 }
         rows.append(contentsOf: DeepScan.devExtras())
+        rows.append(contentsOf: ProjectArtifactFinder.find(in: ProjectArtifactFinder.defaultRoots()))
         return dedupeByURL(rows).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
     }
 
