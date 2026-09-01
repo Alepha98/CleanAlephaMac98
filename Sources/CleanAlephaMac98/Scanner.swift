@@ -457,14 +457,22 @@ enum Scanner {
         )
     }
 
-    /// Byte-identical duplicates in Desktop / Documents / Downloads. Full SHA-256 confirmation
-    /// lives in `DuplicateFinder` so we never offer a non-duplicate for deletion.
+    /// Byte-identical duplicates (full SHA-256 via `DuplicateFinder`) plus visually-similar image
+    /// copies (perceptual dHash via `SimilarImageFinder`), across Desktop / Documents / Downloads.
     private static func duplicates() -> Gathered {
-        DuplicateFinder.find(in: [
+        let roots = [
             home().appendingPathComponent("Desktop"),
             home().appendingPathComponent("Documents"),
             home().appendingPathComponent("Downloads")
-        ])
+        ]
+        var gathered = DuplicateFinder.find(in: roots)
+        // A file already flagged as an exact duplicate must not also appear as a "similar" card.
+        let exactPaths = Set(gathered.items.map { $0.url.standardizedFileURL.path })
+        let similar = SimilarImageFinder.find(in: roots)
+            .filter { !exactPaths.contains($0.url.standardizedFileURL.path) }
+        gathered.items.append(contentsOf: similar)
+        gathered.items.sort { $0.bytes > $1.bytes }
+        return gathered
     }
 
     private static func leftovers() -> Gathered {
