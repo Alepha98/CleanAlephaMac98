@@ -742,32 +742,29 @@ final class AppState {
 
         var stageErrors = 0
         let n = max(stages.count, 1)
-        CamLog.line("scan start \(scope.rawValue) stages=\(n)")
-        for (i, stage) in stages.enumerated() {
+        CamLog.line("scan start \(scope.rawValue) stages=\(n) parallel")
+        var completedStages = 0
+        // Stages scan concurrently (bounded); chunks stream back in completion order.
+        for await result in ScanCoordinator.stream(stages, work: { stage in
+            (stage: stage, chunk: Scanner.safeItems(for: stage))
+        }) {
             guard isCurrentWork(gen) else { return }
-            scanningStage = stage.module
+            completedStages += 1
+            scanningStage = result.stage.module
+            if result.chunk.failed { stageErrors += 1 }
+            items.append(contentsOf: result.chunk.items)
+            scannedModules.insert(result.stage.module)
             if module == scope {
-                status = Copy.scanning(stage.module.name)
-                let targetProgress = Double(i + 1) / Double(n)
-                let targetFill = 0.14 + 0.78 * targetProgress
+                status = Copy.scanning(result.stage.module.name)
+                let targetProgress = Double(completedStages) / Double(n)
                 withAnimation(Motion.level(reduce: reduce)) {
                     progress = targetProgress
-                    orbFill = targetFill
+                    orbFill = 0.14 + 0.78 * targetProgress
                 }
-            }
-            let chunk = await Background.run {
-                Scanner.safeItems(for: stage)
-            }
-            guard isCurrentWork(gen) else { return }
-            if chunk.failed { stageErrors += 1 }
-            items.append(contentsOf: chunk.items)
-            scannedModules.insert(stage.module)
-            if module == scope {
                 displayedBytes = selectedBytes
             }
-            // Soft CPU budget between stages.
-            await ScanThrottle.pace(heavy: stage == .large || stage == .duplicates || stage == .leftovers)
         }
+        guard isCurrentWork(gen) else { return }
 
         // Smart Care one-pass: also run Protection + Performance after cleanup stages.
         if scope == .smart, isCurrentWork(gen) {
