@@ -102,11 +102,11 @@ enum DeepScan {
 
     static func leftoverExtras() -> [JunkItem] {
         var out: [JunkItem] = []
-        let apps = installedAppNames()
-        out.append(contentsOf: orphanCaches(apps: apps))
-        out.append(contentsOf: orphanContainers(apps: apps))
-        out.append(contentsOf: orphanPreferences(apps: apps))
-        out.append(contentsOf: orphanLaunchAgents(apps: apps))
+        let inv = AppInventory.scan()
+        out.append(contentsOf: orphanCaches(inv: inv))
+        out.append(contentsOf: orphanContainers(inv: inv))
+        out.append(contentsOf: orphanPreferences(inv: inv))
+        out.append(contentsOf: orphanLaunchAgents(inv: inv))
         return out
     }
 
@@ -351,7 +351,7 @@ enum DeepScan {
 
     // MARK: - Leftover extras
 
-    private static func orphanCaches(apps: [String]) -> [JunkItem] {
+    private static func orphanCaches(inv: AppInventory) -> [JunkItem] {
         let root = home.appendingPathComponent("Library/Caches")
         let fm = FileManager.default
         guard let kids = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: []) else {
@@ -362,7 +362,7 @@ enum DeepScan {
             let name = url.lastPathComponent
             if name.hasPrefix("com.apple") { continue }
             if Keep.isProtected(url) { continue }
-            if leftoverHasOwner(name, apps: apps) { continue }
+            if inv.hasOwner(name) { continue }
             let b = DiskSizer.bytes(at: url)
             guard b >= 8_388_608 else { continue }
             out.append(JunkItem(
@@ -380,7 +380,7 @@ enum DeepScan {
         return out
     }
 
-    private static func orphanContainers(apps: [String]) -> [JunkItem] {
+    private static func orphanContainers(inv: AppInventory) -> [JunkItem] {
         let root = home.appendingPathComponent("Library/Containers")
         let fm = FileManager.default
         guard let kids = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: []) else {
@@ -393,7 +393,7 @@ enum DeepScan {
             let name = url.lastPathComponent
             if name.hasPrefix("com.apple") { continue }
             if Keep.isProtected(url) { continue }
-            if leftoverHasOwner(name, apps: apps) { continue }
+            if inv.hasOwner(name) { continue }
             let b = DiskSizer.duSK(url, timeout: 6) ?? 0
             guard b >= 12_000_000 else { continue }
             out.append(JunkItem(
@@ -411,7 +411,7 @@ enum DeepScan {
         return out
     }
 
-    private static func orphanPreferences(apps: [String]) -> [JunkItem] {
+    private static func orphanPreferences(inv: AppInventory) -> [JunkItem] {
         let root = home.appendingPathComponent("Library/Preferences")
         let fm = FileManager.default
         guard let kids = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.fileSizeKey], options: []) else {
@@ -424,7 +424,7 @@ enum DeepScan {
             guard name.hasSuffix(".plist") else { continue }
             if name.hasPrefix("com.apple") || name.hasPrefix(".") { continue }
             let stem = String(name.dropLast(6))
-            if leftoverHasOwner(stem, apps: apps) { continue }
+            if inv.hasOwner(stem) { continue }
             guard let rv = try? url.resourceValues(forKeys: [.fileSizeKey]),
                   let size = rv.fileSize,
                   size >= 512_000 else { continue }
@@ -443,7 +443,7 @@ enum DeepScan {
         return Array(out.sorted { $0.bytes > $1.bytes }.prefix(40))
     }
 
-    private static func orphanLaunchAgents(apps: [String]) -> [JunkItem] {
+    private static func orphanLaunchAgents(inv: AppInventory) -> [JunkItem] {
         let root = home.appendingPathComponent("Library/LaunchAgents")
         let fm = FileManager.default
         guard let kids = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.fileSizeKey], options: []) else {
@@ -454,7 +454,7 @@ enum DeepScan {
             let name = url.lastPathComponent
             if name.hasPrefix("com.apple") { continue }
             let stem = name.replacingOccurrences(of: ".plist", with: "")
-            if leftoverHasOwner(stem, apps: apps) { continue }
+            if inv.hasOwner(stem) { continue }
             let b = max(Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 4096), 4096)
             out.append(JunkItem(
                 id: "left-agent-\(name)",
@@ -469,38 +469,6 @@ enum DeepScan {
             ))
         }
         return out
-    }
-
-    // MARK: - Helpers (mirror Scanner leftover ownership)
-
-    private static func installedAppNames() -> [String] {
-        var names: [String] = []
-        for root in ["/Applications", NSHomeDirectory() + "/Applications"] {
-            if let xs = try? FileManager.default.contentsOfDirectory(atPath: root) {
-                names += xs.map { $0.replacingOccurrences(of: ".app", with: "") }
-            }
-        }
-        return names
-    }
-
-    private static func leftoverHasOwner(_ folder: String, apps: [String]) -> Bool {
-        let always = Set(["Apple", "com.apple", "CleanAlephaMac98"])
-        if always.contains(folder) { return true }
-        let lower = folder.lowercased()
-        if apps.contains(where: {
-            let a = $0.lowercased()
-            return a.contains(lower) || lower.contains(a)
-        }) { return true }
-        // Bundle-id style: com.vendor.app → try vendor/app tokens
-        let parts = folder.split(separator: ".").map(String.init)
-        if parts.count >= 2 {
-            let vendor = parts[parts.count - 2]
-            let app = parts[parts.count - 1]
-            if apps.contains(where: { $0.localizedCaseInsensitiveContains(app) || $0.localizedCaseInsensitiveContains(vendor) }) {
-                return true
-            }
-        }
-        return false
     }
 
     private static func short(_ id: String) -> String {

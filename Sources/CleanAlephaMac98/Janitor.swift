@@ -62,6 +62,10 @@ enum Janitor {
         guard fm.fileExists(atPath: item.url.path) else {
             return .alreadyGone(counted: 0)
         }
+        // Measure just before removal (cache-aware) so freed reflects the current size rather than
+        // the possibly-stale scan-time estimate.
+        let measured = DiskSizer.bytes(at: item.url)
+        let freed = measured > 0 ? measured : item.bytes
         do {
             try fm.removeItem(at: item.url)
         } catch {
@@ -70,7 +74,7 @@ enum Janitor {
         if fm.fileExists(atPath: item.url.path) {
             return .refused(leftover: DiskSizer.bytes(at: item.url))
         }
-        return CleanOutcome(freed: item.bytes, failed: false, leftover: 0)
+        return CleanOutcome(freed: freed, failed: false, leftover: 0)
     }
 
     private static func emptyTrash(_ url: URL) -> CleanOutcome {

@@ -469,7 +469,7 @@ enum Scanner {
 
     private static func leftovers() -> Gathered {
         let fm = FileManager.default
-        let apps = installedAppNames()
+        let inv = AppInventory.scan()
         let support = home().appendingPathComponent("Library/Application Support")
         var isDir: ObjCBool = false
         let supportExists = fm.fileExists(atPath: support.path, isDirectory: &isDir) && isDir.boolValue
@@ -479,7 +479,7 @@ enum Scanner {
         var out: [JunkItem] = []
         for url in names {
             let name = url.lastPathComponent
-            if leftoverHasOwner(name, apps: apps) { continue }
+            if inv.hasOwner(name) { continue }
             if name.lowercased().hasPrefix("com.apple") { continue }
             // Apple / iCloud support folders that are not an "uninstalled app".
             let systemSupport = Set([
@@ -496,46 +496,6 @@ enum Scanner {
         out.append(contentsOf: DeepScan.leftoverExtras())
         let filtered = dedupeByURL(out).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
         return Gathered(items: filtered, failed: false)
-    }
-
-    /// Skip leftovers that belong to an installed app — names from this Mac, not a fixed machine list.
-    private static func leftoverHasOwner(_ folder: String, apps: [String]) -> Bool {
-        let always = Set(["Apple", "com.apple", "CleanAlephaMac98"])
-        if always.contains(folder) { return true }
-        if apps.contains(where: { $0.localizedCaseInsensitiveContains(folder) || folder.localizedCaseInsensitiveContains($0) }) {
-            return true
-        }
-        let aliases: [String: [String]] = [
-            "Google": ["Google Chrome", "Chrome", "Google"],
-            "Cursor": ["Cursor"],
-            "Claude": ["Claude"],
-            "Telegram Desktop": ["Telegram"],
-            "Figma": ["Figma"],
-            "Code": ["Visual Studio Code", "Code"],
-            "zoom.us": ["zoom.us", "Zoom"],
-            "Chromium": ["Chromium"],
-            "Microsoft Edge": ["Microsoft Edge", "Edge"],
-            "BraveSoftware": ["Brave Browser", "Brave"],
-            "adspower_global": ["AdsPower", "adspower"],
-            "dolphin_anty": ["dolphin_anty", "Dolphin{anty}"],
-            "Yandex": ["Yandex"]
-        ]
-        if let names = aliases[folder] {
-            return names.contains { alias in
-                apps.contains { $0.localizedCaseInsensitiveContains(alias) }
-            }
-        }
-        return false
-    }
-
-    private static func installedAppNames() -> [String] {
-        var names: [String] = []
-        for root in ["/Applications", NSHomeDirectory() + "/Applications"] {
-            if let xs = try? FileManager.default.contentsOfDirectory(atPath: root) {
-                names += xs.map { $0.replacingOccurrences(of: ".app", with: "") }
-            }
-        }
-        return names
     }
 
     private static func largeFiles() -> Gathered {
