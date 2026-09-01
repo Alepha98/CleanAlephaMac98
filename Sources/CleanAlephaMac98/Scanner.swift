@@ -5,7 +5,7 @@ struct StageChunk: Sendable {
     var failed: Bool
 }
 
-private struct Gathered: Sendable {
+struct Gathered: Sendable {
     var items: [JunkItem]
     var failed: Bool = false
 }
@@ -309,7 +309,7 @@ enum Scanner {
                   Int64(size) >= 20_000_000 else { continue }
             let old = (rv.contentModificationDate ?? .distantPast) < cutoff
             out.append(JunkItem(
-                id: "installer-\(url.lastPathComponent.hashValue)",
+                id: "installer-\(StableID.of(url.standardizedFileURL.path))",
                 module: .junk,
                 title: Line.proper(url.lastPathComponent),
                 subtitle: Line(
@@ -457,93 +457,14 @@ enum Scanner {
         )
     }
 
-    /// Duplicate files (same size + same sample hash) in Desktop / Documents / Downloads.
+    /// Byte-identical duplicates in Desktop / Documents / Downloads. Full SHA-256 confirmation
+    /// lives in `DuplicateFinder` so we never offer a non-duplicate for deletion.
     private static func duplicates() -> Gathered {
-        let roots = [
+        DuplicateFinder.find(in: [
             home().appendingPathComponent("Desktop"),
             home().appendingPathComponent("Documents"),
             home().appendingPathComponent("Downloads")
-        ]
-        let fm = FileManager.default
-        var bySize: [Int64: [URL]] = [:]
-        var failed = false
-        let minFile: Int64 = 1_048_576 // 1 MB – skip tiny noise
-        for root in roots {
-            guard let en = fm.enumerator(
-                at: root,
-                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .isDirectoryKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            ) else {
-                if fm.fileExists(atPath: root.path) { failed = true }
-                continue
-            }
-            var n = 0
-            for case let url as URL in en {
-                n += 1
-                if n > 40_000 { break }
-                if Keep.isProtected(url) {
-                    en.skipDescendants()
-                    continue
-                }
-                guard let rv = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-                      rv.isRegularFile == true,
-                      let size = rv.fileSize,
-                      Int64(size) >= minFile else { continue }
-                bySize[Int64(size), default: []].append(url)
-            }
-        }
-
-        var items: [JunkItem] = []
-        var group = 0
-        for (size, urls) in bySize where urls.count > 1 {
-            var buckets: [String: [URL]] = [:]
-            for url in urls {
-                let sig = fileSignature(url, size: size)
-                buckets[sig, default: []].append(url)
-            }
-            for (_, twins) in buckets where twins.count > 1 {
-                // Keep the oldest path selected=false for all; user picks. Mark all but first as deletable extras.
-                let sorted = twins.sorted { $0.path < $1.path }
-                for (i, url) in sorted.enumerated() where i > 0 {
-                    group += 1
-                    let name = url.lastPathComponent
-                    items.append(JunkItem(
-                        id: "dup-\(group)-\(url.path.hashValue)",
-                        module: .duplicates,
-                        title: Line.proper(name),
-                        subtitle: Line(
-                            ru: "\(Copy.dupKeepOne.ru) \(ByteFormat.string(size, .ru))",
-                            en: "\(Copy.dupKeepOne.en) \(ByteFormat.string(size, .en))"
-                        ),
-                        url: url,
-                        bytes: size,
-                        selected: false,
-                        kind: .deleteItem,
-                        keepsLogins: false
-                    ))
-                }
-            }
-            if items.count > 80 { break }
-        }
-        items.sort { $0.bytes > $1.bytes }
-        return Gathered(items: Array(items.prefix(60)), failed: failed)
-    }
-
-    /// Fast fingerprint: size + prefix/suffix bytes (not cryptographic; enough for cleanup).
-    private static func fileSignature(_ url: URL, size: Int64) -> String {
-        guard let fh = try? FileHandle(forReadingFrom: url) else { return "\(size):\(url.path)" }
-        defer { try? fh.close() }
-        let head = (try? fh.read(upToCount: 64 * 1024)) ?? Data()
-        var tail = Data()
-        if size > 128 * 1024 {
-            try? fh.seek(toOffset: UInt64(size - 64 * 1024))
-            tail = (try? fh.read(upToCount: 64 * 1024)) ?? Data()
-        }
-        var hasher = Hasher()
-        hasher.combine(size)
-        hasher.combine(head)
-        hasher.combine(tail)
-        return "\(size):\(hasher.finalize())"
+        ])
     }
 
     private static func leftovers() -> Gathered {
@@ -683,7 +604,7 @@ enum Scanner {
                         : "\(kindLabelEn) · \(PathFormat.tilde(url.deletingLastPathComponent()))"
                 )
                 found.append(JunkItem(
-                    id: "large-\(url.path.hashValue)",
+                    id: "large-\(StableID.of(url.standardizedFileURL.path))",
                     module: .large,
                     title: Line.proper(url.lastPathComponent),
                     subtitle: sub,
@@ -863,7 +784,7 @@ enum Scanner {
             // Only shallow-ish cache dirs (avoid walking into every blob inside)
             en.skipDescendants()
             guard let item = folderItem(
-                id: "b-\(brand)-\(url.path.hashValue)",
+                id: "b-\(brand)-\(StableID.of(url.standardizedFileURL.path))",
                 module: .browsers,
                 title: Line(ru: "\(brand) – \(name)", en: "\(brand) – \(name)"),
                 subtitle: Line(ru: "Только кэш профиля", en: "Profile cache only"),
@@ -894,7 +815,7 @@ enum Scanner {
         for account in telegramAccounts() {
             let acc = account.lastPathComponent
             if let x = messengerFolder(
-                id: "tg-m-\(account.path.hashValue)",
+                id: "tg-m-\(StableID.of(account.standardizedFileURL.path))",
                 title: Line(ru: "Telegram медиа", en: "Telegram media"),
                 subtitle: Line.proper(acc),
                 url: account.appendingPathComponent("postbox/media"),
@@ -903,7 +824,7 @@ enum Scanner {
                 rows.append(x)
             }
             if let x = messengerFolder(
-                id: "tg-d-\(account.path.hashValue)",
+                id: "tg-d-\(StableID.of(account.standardizedFileURL.path))",
                 title: Line(ru: "Telegram история", en: "Telegram history"),
                 subtitle: Line(ru: "Локальная база, по умолчанию выкл", en: "Local database, off by default"),
                 url: account.appendingPathComponent("postbox/db"),

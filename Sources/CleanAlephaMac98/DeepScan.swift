@@ -209,7 +209,7 @@ enum DeepScan {
                 let b = DiskSizer.bytes(at: url)
                 guard b >= minBytes else { continue }
                 out.append(JunkItem(
-                    id: "gcache-\(id)-\(url.path.hashValue)",
+                    id: "gcache-\(id)-\(StableID.of(url.standardizedFileURL.path))",
                     module: .junk,
                     title: Line(ru: "Group · \(short(id))", en: "Group · \(short(id))"),
                     subtitle: Line(ru: "Group Containers / Caches", en: "Group Containers / Caches"),
