@@ -57,6 +57,16 @@ enum Janitor {
         return .refused(leftover: item.bytes)
     }
 
+    /// User documents (Large / Duplicates) go to the Trash so a mistake stays recoverable;
+    /// regenerable caches are removed outright.
+    private static func discard(_ url: URL, module: Module) throws {
+        if module == .large || module == .duplicates {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        } else {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
     private static func deleteItem(_ item: JunkItem) -> CleanOutcome {
         let fm = FileManager.default
         guard fm.fileExists(atPath: item.url.path) else {
@@ -67,7 +77,7 @@ enum Janitor {
         let measured = DiskSizer.bytes(at: item.url)
         let freed = measured > 0 ? measured : item.bytes
         do {
-            try fm.removeItem(at: item.url)
+            try discard(item.url, module: item.module)
         } catch {
             return .refused(leftover: DiskSizer.bytes(at: item.url))
         }
@@ -186,7 +196,11 @@ enum Janitor {
     }
 
     private static func removeLoginItem(_ item: JunkItem) -> CleanOutcome {
-        let name = item.title.ru.replacingOccurrences(of: "\"", with: "")
+        // The login item's real name is carried verbatim in the title (Line.proper sets ru == en).
+        // Escape backslashes first, then quotes, so the AppleScript string literal stays valid.
+        let name = item.title.ru
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
         guard !name.isEmpty else { return .refused(leftover: 0) }
         let source = "tell application \"System Events\" to delete login item \"\(name)\""
         var error: NSDictionary?
