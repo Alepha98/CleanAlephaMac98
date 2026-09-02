@@ -107,6 +107,8 @@ enum DeepScan {
         out.append(contentsOf: orphanContainers(inv: inv))
         out.append(contentsOf: orphanPreferences(inv: inv))
         out.append(contentsOf: orphanLaunchAgents(inv: inv))
+        // Cookies + per-app Logs of removed apps — the footprint locations no other pass owner-filters.
+        out.append(contentsOf: AppFootprint.orphans(inventory: inv))
         return out
     }
 
