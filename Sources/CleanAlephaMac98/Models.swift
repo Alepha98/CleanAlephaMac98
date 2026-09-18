@@ -3,7 +3,7 @@ import Foundation
 enum Module: String, CaseIterable, Identifiable, Sendable {
     case smart, junk, mail, trash, leftovers, large, duplicates, browsers, dev, messengers, privacy
     case pulse, protect, startup
-    case space, tools
+    case space, tools, uninstaller
     var id: String { rawValue }
 
     var name: Line {
@@ -24,6 +24,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .startup: Copy.moduleStartup
         case .space: Copy.moduleSpace
         case .tools: Copy.moduleTools
+        case .uninstaller: Copy.moduleUninstaller
         }
     }
 
@@ -43,6 +44,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .pulse: Copy.subPulse
         case .protect: Copy.subProtect
         case .startup: Copy.subStartup
+        case .uninstaller: Copy.subUninstaller
         case .space, .tools: Line(ru: "", en: "")
         }
     }
@@ -52,7 +54,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .smart, .junk, .mail, .trash, .leftovers, .large, .duplicates, .browsers, .dev, .messengers,
              .privacy, .pulse, .protect, .startup:
             true
-        case .space, .tools:
+        case .space, .tools, .uninstaller:
             false
         }
     }

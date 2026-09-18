@@ -509,6 +509,27 @@ enum Copy {
     static let modulePrivacy = Line(ru: "Приватность", en: "Privacy")
     static let moduleSpace = Line(ru: "Обзор диска", en: "Disk")
     static let moduleTools = Line(ru: "Обслуживание", en: "Maintenance")
+    static let moduleUninstaller = Line(ru: "Деинсталлятор", en: "Uninstaller")
+
+    static let subUninstaller = Line(
+        ru: "Снести приложение вместе со всеми его хвостами на диске.",
+        en: "Remove an app together with everything it scattered on disk."
+    )
+    // Uninstaller screen
+    static let uninstallHint = Line(
+        ru: "Выбери приложение — покажу весь его след и уберу в Корзину.",
+        en: "Pick an app — I'll show its full footprint and move it to the Trash."
+    )
+    static let uninstallReading = Line(ru: "Читаю приложения…", en: "Reading apps…")
+    static let uninstallMeasuring = Line(ru: "Считаю след на диске…", en: "Measuring the footprint…")
+    static let uninstallAppItself = Line(ru: "Само приложение", en: "The app itself")
+    static let uninstallLeftovers = Line(ru: "Хвосты", en: "Leftovers")
+    static let uninstallNoLeftovers = Line(ru: "Хвостов не нашёл — уберём только приложение.", en: "No leftovers found — only the app itself.")
+    static let uninstallMove = Line(ru: "Убрать в Корзину", en: "Move to Trash")
+    static let uninstallBack = Line(ru: "← Все приложения", en: "← All apps")
+    static let uninstallRunning = Line(ru: "Запущено — можно удалить, но лучше сначала закрыть.", en: "Running — you can remove it, but quitting first is cleaner.")
+    static let uninstallEmpty = Line(ru: "Приложений в /Applications не нашёл.", en: "No apps found in /Applications.")
+    static let uninstallTrashHint = Line(ru: "Всё уходит в Корзину — вернёшь одним движением.", en: "Everything goes to the Trash — one move to undo.")
 
     static let subSmart = Line(
         ru: "Кэш, мусор, проверка и быстродействие.",
@@ -618,6 +639,24 @@ enum Copy {
 
     static func selected(_ n: Int, of total: Int) -> Line {
         Line(ru: "выбрано \(n) из \(total)", en: "\(n) of \(total) selected")
+    }
+
+    /// "3 хвоста · 412 МБ" — footprint summary line under an app in the uninstaller.
+    static func uninstallFootprint(_ n: Int, _ bytes: Int64) -> Line {
+        if n == 0 {
+            return Line(ru: ByteFormat.string(bytes, .ru), en: ByteFormat.string(bytes, .en))
+        }
+        return Line(
+            ru: "\(n) хв. · \(ByteFormat.string(bytes, .ru))",
+            en: "\(n) item\(n == 1 ? "" : "s") · \(ByteFormat.string(bytes, .en))"
+        )
+    }
+
+    static func uninstallDone(_ name: String, _ bytes: Int64) -> Line {
+        Line(
+            ru: "«\(name)» в Корзине · освобождено \(ByteFormat.string(bytes, .ru))",
+            en: "“\(name)” trashed · \(ByteFormat.string(bytes, .en)) freed"
+        )
     }
 
     static func percent(_ n: Int) -> Line {

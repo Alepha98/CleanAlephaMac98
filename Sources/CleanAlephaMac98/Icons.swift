@@ -26,6 +26,7 @@ enum Glyph: Equatable, Sendable {
         case .startup: self = .startup
         case .space: self = .space
         case .tools: self = .tools
+        case .uninstaller: self = .leftovers
         }
     }
 
