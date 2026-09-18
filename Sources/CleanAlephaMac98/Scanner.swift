@@ -529,7 +529,9 @@ enum Scanner {
             }
             var depthGuard = 0
             let deepRoot = root.path.contains("/Library/")
-            let limit = deepRoot ? 8_000 : 14_000
+            // Each entry costs one stat (cheap), and big roots (a packed Downloads/Documents) used to
+            // hit the old 8k/14k ceiling before the enumerator ever reached large files buried deeper.
+            let limit = deepRoot ? 60_000 : 120_000
             for case let url as URL in en {
                 depthGuard += 1
                 if depthGuard > limit { break }
@@ -587,7 +589,7 @@ enum Scanner {
         let items = found
             .filter { !Keep.isDismissed($0.id) }
             .sorted { $0.bytes > $1.bytes }
-        return Gathered(items: Array(items.prefix(120)), failed: failed)
+        return Gathered(items: Array(items.prefix(250)), failed: failed)
     }
 
     private static func browsers() -> [JunkItem] {
