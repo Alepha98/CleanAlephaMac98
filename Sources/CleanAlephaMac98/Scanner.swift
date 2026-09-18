@@ -459,17 +459,27 @@ enum Scanner {
 
     /// Byte-identical duplicates (full SHA-256 via `DuplicateFinder`) plus visually-similar image
     /// copies (perceptual dHash via `SimilarImageFinder`), across Desktop / Documents / Downloads.
+    /// Env-guarded profiling mark (CAM98_PROF=1) — splits a composite stage's internal cost.
+    @inline(__always) private static func profMark(_ label: String, _ start: Date) {
+        guard ProcessInfo.processInfo.environment["CAM98_PROF"] != nil else { return }
+        FileHandle.standardError.write(Data("prof \(label) \(Int(Date().timeIntervalSince(start) * 1000))ms\n".utf8))
+    }
+
     private static func duplicates() -> Gathered {
         let roots = [
             home().appendingPathComponent("Desktop"),
             home().appendingPathComponent("Documents"),
             home().appendingPathComponent("Downloads")
         ]
+        let t1 = Date()
         var gathered = DuplicateFinder.find(in: roots)
+        profMark("dup.exact", t1)
         // A file already flagged as an exact duplicate must not also appear as a "similar" card.
         let exactPaths = Set(gathered.items.map { $0.url.standardizedFileURL.path })
+        let t2 = Date()
         let similar = SimilarImageFinder.find(in: roots)
             .filter { !exactPaths.contains($0.url.standardizedFileURL.path) }
+        profMark("dup.similar", t2)
         gathered.items.append(contentsOf: similar)
         gathered.items.sort { $0.bytes > $1.bytes }
         return gathered
@@ -785,8 +795,12 @@ enum Scanner {
             item("swiftpm", .dev, Line.proper("SwiftPM cache"), Line.proper("org.swift.swiftpm"), "Library/Caches/org.swift.swiftpm"),
             item("pnpm", .dev, Line.proper("pnpm cache"), Line.proper("Library/Caches/pnpm"), "Library/Caches/pnpm")
         ].compactMap { $0 }
+        let td = Date()
         rows.append(contentsOf: DeepScan.devExtras())
+        profMark("dev.extras", td)
+        let tp = Date()
         rows.append(contentsOf: ProjectArtifactFinder.find(in: ProjectArtifactFinder.defaultRoots()))
+        profMark("dev.artifacts", tp)
         return dedupeByURL(rows).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
     }
 

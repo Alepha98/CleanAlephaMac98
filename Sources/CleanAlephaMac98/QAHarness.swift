@@ -62,6 +62,9 @@ enum QAHarness {
         let t0 = Date()
         var total = 0
         var forbidden = 0
+        var out = "\nstage         items      bytes        sel-bytes     ms\n"
+        out +=      "-----------------------------------------------------------\n"
+        var grandBytes: Int64 = 0
         for stage in Scanner.ScanStage.allCases {
             if Date().timeIntervalSince(t0) > 180 {
                 CamLog.line("qa smart abort remaining after 180s at \(stage.module.rawValue)")
@@ -71,6 +74,9 @@ enum QAHarness {
             let chunk = Scanner.safeItems(for: stage)
             let ms = Int(Date().timeIntervalSince(started) * 1000)
             total += chunk.items.count
+            let bytes = chunk.items.reduce(Int64(0)) { $0 + $1.bytes }
+            let selBytes = chunk.items.filter(\.selected).reduce(Int64(0)) { $0 + $1.bytes }
+            grandBytes += bytes
             for item in chunk.items {
                 if Keep.isProtected(item.url) {
                     forbidden += 1
@@ -81,12 +87,18 @@ enum QAHarness {
                     CamLog.line("qa smart LOGIN \(stage.module.rawValue) \(item.id) \(item.url.lastPathComponent)")
                 }
             }
-            CamLog.line("qa smart \(stage.module.rawValue) items=\(chunk.items.count) failed=\(chunk.failed) ms=\(ms)")
-            for item in chunk.items.prefix(5) {
-                CamLog.line("qa smart card \(item.id) bytes=\(item.bytes) sel=\(item.selected)")
-            }
+            CamLog.line("qa smart \(stage.module.rawValue) items=\(chunk.items.count) bytes=\(bytes) failed=\(chunk.failed) ms=\(ms)")
+            let name = stage.module.rawValue.padding(toLength: 12, withPad: " ", startingAt: 0)
+            let items = String(chunk.items.count).padding(toLength: 6, withPad: " ", startingAt: 0)
+            let b = ByteFormat.string(bytes, .en).padding(toLength: 11, withPad: " ", startingAt: 0)
+            let sb = ByteFormat.string(selBytes, .en).padding(toLength: 12, withPad: " ", startingAt: 0)
+            out += "\(name)  \(items)  \(b)  \(sb)  \(ms)\(chunk.failed ? "  FAILED" : "")\n"
         }
-        CamLog.line("qa smart done items=\(total) leaks=\(forbidden) ms=\(Int(Date().timeIntervalSince(t0) * 1000))")
+        let totalMs = Int(Date().timeIntervalSince(t0) * 1000)
+        out += "-----------------------------------------------------------\n"
+        out += "TOTAL         \(total) items   \(ByteFormat.string(grandBytes, .en))   \(totalMs) ms\n"
+        CamLog.line("qa smart done items=\(total) leaks=\(forbidden) ms=\(totalMs)")
+        FileHandle.standardOutput.write(Data(out.utf8))
         FileHandle.standardOutput.write(Data("qa-smart ok items=\(total) leaks=\(forbidden)\n".utf8))
         exit(0)
     }
