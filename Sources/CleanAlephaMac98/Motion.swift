@@ -282,6 +282,7 @@ struct WindowBackgroundDrag: NSViewRepresentable {
         nsView.window?.titlebarAppearsTransparent = true
         nsView.window?.setFrameAutosaveName("CAM98.Main")
         nsView.window?.appearance = appearance.nsAppearance
+        DragNSView.tidyChrome(nsView.window)
     }
 }
 
@@ -291,6 +292,16 @@ private final class DragNSView: NSView {
         window?.isMovableByWindowBackground = true
         window?.titlebarAppearsTransparent = true
         window?.setFrameAutosaveName("CAM98.Main")
+        DragNSView.tidyChrome(window)
+    }
+
+    /// No tab bar and no full-screen for this single-window utility — so the top strip is just the
+    /// traffic lights, and the "View" menu (which would otherwise carry "Enter Full Screen") is empty.
+    static func tidyChrome(_ window: NSWindow?) {
+        guard let window else { return }
+        window.tabbingMode = .disallowed
+        window.collectionBehavior.remove(.fullScreenPrimary)
+        window.collectionBehavior.remove(.fullScreenAuxiliary)
     }
 }
 

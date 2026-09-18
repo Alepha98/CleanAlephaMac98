@@ -180,7 +180,7 @@ final class AppState {
     }
 
     func hasScanned(_ m: Module) -> Bool {
-        if m == .space || m == .tools { return false }
+        if m == .space || m == .tools || m == .uninstaller { return false }
         if resultsDismissed.contains(m) { return false }
         // Smart only after an actual smart scan – never borrow a single layer scan.
         if m == .smart { return scannedModules.contains(.smart) }
@@ -410,7 +410,7 @@ final class AppState {
     }
 
     func sidebarBytes(for module: Module) -> Int64 {
-        if module == .space || module == .tools { return 0 }
+        if module == .space || module == .tools || module == .uninstaller { return 0 }
         if module == .pulse, let p = pulse, hasScanned(.pulse) { return p.used }
         if module == .smart {
             return items.filter { $0.bytes > 0 && !$0.module.isLiveModule }.reduce(0) { $0 + $1.bytes }

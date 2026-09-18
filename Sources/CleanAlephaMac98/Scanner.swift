@@ -459,17 +459,27 @@ enum Scanner {
 
     /// Byte-identical duplicates (full SHA-256 via `DuplicateFinder`) plus visually-similar image
     /// copies (perceptual dHash via `SimilarImageFinder`), across Desktop / Documents / Downloads.
+    /// Env-guarded profiling mark (CAM98_PROF=1) — splits a composite stage's internal cost.
+    @inline(__always) private static func profMark(_ label: String, _ start: Date) {
+        guard ProcessInfo.processInfo.environment["CAM98_PROF"] != nil else { return }
+        FileHandle.standardError.write(Data("prof \(label) \(Int(Date().timeIntervalSince(start) * 1000))ms\n".utf8))
+    }
+
     private static func duplicates() -> Gathered {
         let roots = [
             home().appendingPathComponent("Desktop"),
             home().appendingPathComponent("Documents"),
             home().appendingPathComponent("Downloads")
         ]
+        let t1 = Date()
         var gathered = DuplicateFinder.find(in: roots)
+        profMark("dup.exact", t1)
         // A file already flagged as an exact duplicate must not also appear as a "similar" card.
         let exactPaths = Set(gathered.items.map { $0.url.standardizedFileURL.path })
+        let t2 = Date()
         let similar = SimilarImageFinder.find(in: roots)
             .filter { !exactPaths.contains($0.url.standardizedFileURL.path) }
+        profMark("dup.similar", t2)
         gathered.items.append(contentsOf: similar)
         gathered.items.sort { $0.bytes > $1.bytes }
         return gathered
@@ -527,12 +537,19 @@ enum Scanner {
                 if isDir.boolValue { failed = true }
                 continue
             }
-            var depthGuard = 0
+            var walked = 0
             let deepRoot = root.path.contains("/Library/")
-            let limit = deepRoot ? 8_000 : 14_000
+            // Bound the walk by TIME, not entry count. A count cap silently truncated real results on a
+            // packed disk (the enumerator hit the ceiling before reaching big files deeper in the tree).
+            // A wall-clock budget keeps latency bounded even on a pathological folder yet reads a fast,
+            // large disk to the end — one stat per entry is microseconds. The enumerator never follows
+            // symlinks (no loops), and the heavy trees below are still pruned. The huge count is only a
+            // last-ditch backstop, not the working limit.
+            let deadline = Date().addingTimeInterval(6)
             for case let url as URL in en {
-                depthGuard += 1
-                if depthGuard > limit { break }
+                walked += 1
+                if walked & 0x3FF == 0, Date() > deadline { break }
+                if walked > 3_000_000 { break }
                 if skip.contains(url.lastPathComponent) { en.skipDescendants(); continue }
                 if Keep.isProtected(url) { en.skipDescendants(); continue }
                 if ["node_modules", ".git", ".colima", "DerivedData", "CoreSimulator", "iOS DeviceSupport"].contains(url.lastPathComponent) {
@@ -587,7 +604,7 @@ enum Scanner {
         let items = found
             .filter { !Keep.isDismissed($0.id) }
             .sorted { $0.bytes > $1.bytes }
-        return Gathered(items: Array(items.prefix(120)), failed: failed)
+        return Gathered(items: Array(items.prefix(250)), failed: failed)
     }
 
     private static func browsers() -> [JunkItem] {
@@ -744,9 +761,13 @@ enum Scanner {
 
         var out: [JunkItem] = []
         var seen = 0
+        // Time budget, not a count cap: an antidetect browser can hold hundreds of profiles, and the
+        // old 4k ceiling could stop before their cache folders were all seen.
+        let deadline = Date().addingTimeInterval(4)
         for case let url as URL in en {
             seen += 1
-            if seen > 4_000 { break }
+            if seen & 0x1FF == 0, Date() > deadline { break }
+            if seen > 2_000_000 { break }
             let name = url.lastPathComponent
             guard profileCacheNames.contains(name) else { continue }
             // Only shallow-ish cache dirs (avoid walking into every blob inside)
@@ -774,8 +795,12 @@ enum Scanner {
             item("swiftpm", .dev, Line.proper("SwiftPM cache"), Line.proper("org.swift.swiftpm"), "Library/Caches/org.swift.swiftpm"),
             item("pnpm", .dev, Line.proper("pnpm cache"), Line.proper("Library/Caches/pnpm"), "Library/Caches/pnpm")
         ].compactMap { $0 }
+        let td = Date()
         rows.append(contentsOf: DeepScan.devExtras())
+        profMark("dev.extras", td)
+        let tp = Date()
         rows.append(contentsOf: ProjectArtifactFinder.find(in: ProjectArtifactFinder.defaultRoots()))
+        profMark("dev.artifacts", tp)
         return dedupeByURL(rows).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
     }
 
