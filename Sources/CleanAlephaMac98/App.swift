@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         // No window tabs: kills the tab bar (the title "pill" + the "+" new-tab button) app-wide.
         NSWindow.allowsAutomaticWindowTabbing = false
+        // AppKit injects "Enter Full Screen" into View, which kept an otherwise empty View menu alive.
+        // The window opts out of full screen anyway (DragNSView), so drop the item → no View menu.
+        UserDefaults.standard.register(defaults: ["NSFullScreenMenuItemEverywhere": false])
 
         // `open -n` during installs spawned 3 copies, each burning ~30% CPU on the orb.
         let id = Bundle.main.bundleIdentifier ?? "com.alepha98.CleanAlephaMac98"

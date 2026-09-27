@@ -63,7 +63,7 @@ enum SessionGuard {
         ),
         Owner(
             name: "Claude",
-            pathMarkers: ["/.claude/", "/application support/claude/", "/private/tmp/claude-"],
+            pathMarkers: ["/.claude/", "/application support/claude/", "/tmp/claude-"],
             bundleIDs: ["com.anthropic.claudefordesktop"],
             appNames: ["claude"]
         ),
@@ -168,14 +168,27 @@ enum SessionGuard {
     }
 
     static func runningOwner(for url: URL) -> String? {
-        let running = NSWorkspace.shared.runningApplications
+        runningOwner(for: url, running: NSWorkspace.shared.runningApplications.map {
+            RunningApp(bundleID: $0.bundleIdentifier, name: $0.localizedName)
+        })
+    }
+
+    struct RunningApp {
+        let bundleID: String?
+        let name: String?
+    }
+
+    /// Testable core. A curated owner is authoritative: its exact bundle ids / names decide, and the
+    /// fuzzy fallbacks below never run for it — they once matched `~/…/Application Support/Cursor`
+    /// to Apple's always-on `CursorUIViewService`, so Cursor's caches were refused forever.
+    static func runningOwner(for url: URL, running: [RunningApp]) -> String? {
         if let owner = owner(for: url) {
             let isRunning = running.contains { app in
-                if let bundle = app.bundleIdentifier, owner.bundleIDs.contains(bundle) { return true }
-                if let name = app.localizedName?.lowercased(), owner.appNames.contains(name) { return true }
+                if let bundle = app.bundleID, owner.bundleIDs.contains(bundle) { return true }
+                if let name = app.name?.lowercased(), owner.appNames.contains(name) { return true }
                 return false
             }
-            if isRunning { return owner.name }
+            return isRunning ? owner.name : nil
         }
 
         // Generic sandbox/cache fallback: Library/Containers/<bundle-id>/... and
@@ -185,8 +198,8 @@ enum SessionGuard {
             guard let index = components.lastIndex(of: marker), index + 1 < components.count else { continue }
             let candidate = components[index + 1]
             guard candidate.contains(".") else { continue }
-            if let app = running.first(where: { $0.bundleIdentifier?.caseInsensitiveCompare(candidate) == .orderedSame }) {
-                return app.localizedName ?? candidate
+            if let app = running.first(where: { $0.bundleID?.caseInsensitiveCompare(candidate) == .orderedSame }) {
+                return app.name ?? candidate
             }
         }
 
@@ -199,7 +212,7 @@ enum SessionGuard {
             let candidateToken = ownerToken(candidate)
             guard candidateToken.count >= 4 else { continue }
             if let app = running.first(where: { app in
-                if let bundle = app.bundleIdentifier {
+                if let bundle = app.bundleID {
                     let bundleToken = ownerToken(bundle)
                     if bundle.caseInsensitiveCompare(candidate) == .orderedSame
                         || candidate.lowercased().hasSuffix(bundle.lowercased())
@@ -207,14 +220,17 @@ enum SessionGuard {
                         return true
                     }
                 }
-                guard let name = app.localizedName else { return false }
+                guard let name = app.name else { return false }
                 let nameToken = ownerToken(name)
-                return nameToken.count >= 4
-                    && (candidateToken == nameToken
-                        || (nameToken.count >= 6 && candidateToken.contains(nameToken))
-                        || (candidateToken.count >= 6 && nameToken.contains(candidateToken)))
+                guard nameToken.count >= 4 else { return false }
+                if candidateToken == nameToken { return true }
+                // Partial name similarity only for third-party apps: macOS runs hundreds of agents
+                // and XPC services whose names merely contain a word (CursorUIViewService ⊃ "cursor").
+                if app.bundleID?.lowercased().hasPrefix("com.apple.") == true { return false }
+                return (nameToken.count >= 6 && candidateToken.contains(nameToken))
+                    || (candidateToken.count >= 6 && nameToken.contains(candidateToken))
             }) {
-                return app.localizedName ?? app.bundleIdentifier ?? candidate
+                return app.name ?? app.bundleID ?? candidate
             }
         }
 
@@ -222,12 +238,12 @@ enum SessionGuard {
         // is commonly a bundle id; keep it untouched while that app is alive.
         if let token = SystemDeepScanner.runtimeOwnerToken(for: url)?.lowercased() {
             if let app = running.first(where: { app in
-                guard let bundle = app.bundleIdentifier?.lowercased() else { return false }
+                guard let bundle = app.bundleID?.lowercased() else { return false }
                 return token == bundle
                     || token.hasPrefix(bundle + ".")
                     || token.hasSuffix("." + bundle)
             }) {
-                return app.localizedName ?? app.bundleIdentifier ?? token
+                return app.name ?? app.bundleID ?? token
             }
         }
         return nil
