@@ -6,7 +6,7 @@ import Foundation
 /// duplicates — they are not byte-identical and the user must judge which to keep.
 enum SimilarImageFinder {
     struct Config: Sendable {
-        var minFileBytes: Int64 = 51_200   // 50KB — skip icons/thumbnails
+        var minFileBytes: Int64 = 131_072  // 128KB — skip icons/thumbnails/sprites, keep real photos
         var maxImages: Int = 4000
         var maxDistance: Int = 8           // Hamming distance ≤ this ⇒ "looks the same"
         var maxItems: Int = 120
@@ -14,6 +14,16 @@ enum SimilarImageFinder {
 
     static let imageExtensions: Set<String> =
         ["jpg", "jpeg", "png", "heic", "heif", "gif", "tiff", "tif", "bmp", "webp"]
+
+    /// Dependency / VCS / build trees that hold hundreds of thousands of tiny files but never photos
+    /// worth de-duping. Walking into them (a project's node_modules) was the real cost — not decoding.
+    static let skipDirs: Set<String> = [
+        "node_modules", ".git", ".svn", ".hg", "Pods", "Carthage",
+        ".venv", "venv", "env", "__pycache__", ".tox",
+        "DerivedData", ".build", ".gradle", ".cxx", "target",
+        ".next", ".nuxt", ".svelte-kit", ".angular", ".parcel-cache", ".cache",
+        "CoreSimulator", "iOS DeviceSupport", ".Trash"
+    ]
 
     private struct Img: Sendable { let url: URL; let size: Int64; let hash: UInt64 }
 
@@ -28,12 +38,15 @@ enum SimilarImageFinder {
         let candidates = collect(roots: roots, config: config)
         guard candidates.count > 1 else { return [] }
 
-        // Perceptual hashes are independent per image → hash them in parallel.
+        // Perceptual hashes are independent per image → hash them in parallel. The cache skips the
+        // decode for any photo unchanged since the last scan, so rescans cost almost nothing.
+        PerceptualCache.shared.preload()   // load once, before the parallel loop, or threads race an empty map
         let sink = Sink()
         DispatchQueue.concurrentPerform(iterations: candidates.count) { i in
             let (url, size) = candidates[i]
-            sink.add(ImageHash.dHash(url).map { Img(url: url, size: size, hash: $0) })
+            sink.add(PerceptualCache.shared.hash(for: url).map { Img(url: url, size: size, hash: $0) })
         }
+        PerceptualCache.shared.flush()
 
         // Largest file first so each cluster keeps the highest-resolution copy.
         let images = sink.all.sorted { $0.size > $1.size }
@@ -86,6 +99,8 @@ enum SimilarImageFinder {
             for case let url as URL in en {
                 ScanThrottle.tickSync(every: 500, counter: &n)
                 if out.count >= config.maxImages { break }
+                let name = url.lastPathComponent
+                if skipDirs.contains(name) { en.skipDescendants(); continue }
                 if Keep.isProtected(url) { en.skipDescendants(); continue }
                 guard imageExtensions.contains(url.pathExtension.lowercased()) else { continue }
                 guard let rv = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),

@@ -3,7 +3,7 @@ import Foundation
 enum Module: String, CaseIterable, Identifiable, Sendable {
     case smart, junk, mail, trash, leftovers, large, duplicates, browsers, dev, messengers, privacy
     case pulse, protect, startup
-    case space, tools
+    case space, tools, uninstaller
     var id: String { rawValue }
 
     var name: Line {
@@ -24,6 +24,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .startup: Copy.moduleStartup
         case .space: Copy.moduleSpace
         case .tools: Copy.moduleTools
+        case .uninstaller: Copy.moduleUninstaller
         }
     }
 
@@ -43,6 +44,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .pulse: Copy.subPulse
         case .protect: Copy.subProtect
         case .startup: Copy.subStartup
+        case .uninstaller: Copy.subUninstaller
         case .space, .tools: Line(ru: "", en: "")
         }
     }
@@ -52,7 +54,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .smart, .junk, .mail, .trash, .leftovers, .large, .duplicates, .browsers, .dev, .messengers,
              .privacy, .pulse, .protect, .startup:
             true
-        case .space, .tools:
+        case .space, .tools, .uninstaller:
             false
         }
     }
@@ -190,10 +192,15 @@ enum Keep {
     }
 
     static func isProtected(_ url: URL) -> Bool {
-        let p = url.standardizedFileURL.path
+        isProtected(path: url.standardizedFileURL.path, extras: extraPaths)
+    }
+
+    /// Hot-loop form for the directory walker: `p` must already be an absolute, standardized path,
+    /// and `extras` is one snapshot of `extraPaths` (the property re-reads UserDefaults every call).
+    static func isProtected(path p: String, extras: [String]) -> Bool {
         if pathFragments.contains(where: { p.contains($0) }) { return true }
-        for extra in extraPaths {
-            if p == extra || p.hasPrefix(extra + "/") { return true }
+        for extra in extras where p == extra || p.hasPrefix(extra + "/") {
+            return true
         }
         return false
     }

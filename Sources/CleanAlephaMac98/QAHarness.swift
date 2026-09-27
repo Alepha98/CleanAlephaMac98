@@ -57,37 +57,90 @@ enum QAHarness {
         exit(0)
     }
 
+    /// Profiles a Smart scan the way the app runs it: Smart's light stages concurrently (real wall
+    /// time, measured cold first), then a per-stage table, then the deep on-demand stages
+    /// (skip them with CAM98_QA_LIGHT=1).
     static func smart() -> Never {
         CamLog.line("qa smart begin")
         let t0 = Date()
+        let light = Scanner.ScanStage.stages(for: .smart)
+        let deep = Scanner.ScanStage.allCases.filter(\.isDeep)
+
+        let wallMs = parallelWallMs(light)
+        SizeCache.shared.clear()   // per-stage timings below shouldn't ride the parallel run's cache
+
         var total = 0
         var forbidden = 0
-        for stage in Scanner.ScanStage.allCases {
-            if Date().timeIntervalSince(t0) > 180 {
-                CamLog.line("qa smart abort remaining after 180s at \(stage.module.rawValue)")
-                break
-            }
-            let started = Date()
-            let chunk = Scanner.safeItems(for: stage)
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            total += chunk.items.count
-            for item in chunk.items {
-                if Keep.isProtected(item.url) {
-                    forbidden += 1
-                    CamLog.line("qa smart LEAK \(stage.module.rawValue) \(item.id) \(item.url.path)")
+        var out = "\nSMART — light stages, parallel wall time as in the app: \(wallMs) ms\n"
+        out += "  (+ the live Protection/Performance/Startup checks Smart runs after)\n"
+
+        func table(_ title: String, _ stages: [Scanner.ScanStage]) {
+            out += "\n\(title)\nstage         items      bytes        sel-bytes     ms\n"
+            out += "-----------------------------------------------------------\n"
+            var sumBytes: Int64 = 0
+            var sumSel: Int64 = 0
+            var sumMs = 0
+            for stage in stages {
+                if Date().timeIntervalSince(t0) > 300 {
+                    CamLog.line("qa smart abort remaining after 300s at \(stage.module.rawValue)")
+                    out += "(aborted after 300s)\n"
+                    break
                 }
-                if Keep.names.contains(item.url.lastPathComponent) {
-                    forbidden += 1
-                    CamLog.line("qa smart LOGIN \(stage.module.rawValue) \(item.id) \(item.url.lastPathComponent)")
+                let started = Date()
+                let chunk = Scanner.safeItems(for: stage)
+                let ms = Int(Date().timeIntervalSince(started) * 1000)
+                total += chunk.items.count
+                let bytes = chunk.items.reduce(Int64(0)) { $0 + $1.bytes }
+                let selBytes = chunk.items.filter(\.selected).reduce(Int64(0)) { $0 + $1.bytes }
+                sumBytes += bytes
+                sumSel += selBytes
+                sumMs += ms
+                for item in chunk.items {
+                    if Keep.isProtected(item.url), !Keep.allowsExplicitCard(item) {
+                        forbidden += 1
+                        CamLog.line("qa smart LEAK \(stage.module.rawValue) \(item.id) \(item.url.path)")
+                    }
+                    if Keep.names.contains(item.url.lastPathComponent) {
+                        forbidden += 1
+                        CamLog.line("qa smart LOGIN \(stage.module.rawValue) \(item.id) \(item.url.lastPathComponent)")
+                    }
                 }
+                CamLog.line("qa smart \(stage) items=\(chunk.items.count) bytes=\(bytes) failed=\(chunk.failed) ms=\(ms)")
+                let name = "\(stage)".padding(toLength: 12, withPad: " ", startingAt: 0)
+                let items = String(chunk.items.count).padding(toLength: 6, withPad: " ", startingAt: 0)
+                let b = ByteFormat.string(bytes, .en).padding(toLength: 11, withPad: " ", startingAt: 0)
+                let sb = ByteFormat.string(selBytes, .en).padding(toLength: 12, withPad: " ", startingAt: 0)
+                out += "\(name)  \(items)  \(b)  \(sb)  \(ms)\(chunk.failed ? "  FAILED" : "")\n"
             }
-            CamLog.line("qa smart \(stage.module.rawValue) items=\(chunk.items.count) failed=\(chunk.failed) ms=\(ms)")
-            for item in chunk.items.prefix(5) {
-                CamLog.line("qa smart card \(item.id) bytes=\(item.bytes) sel=\(item.selected)")
-            }
+            out += "-----------------------------------------------------------\n"
+            out += "sum           found \(ByteFormat.string(sumBytes, .en)) · selected \(ByteFormat.string(sumSel, .en)) · sequential \(sumMs) ms\n"
         }
-        CamLog.line("qa smart done items=\(total) leaks=\(forbidden) ms=\(Int(Date().timeIntervalSince(t0) * 1000))")
-        FileHandle.standardOutput.write(Data("qa-smart ok items=\(total) leaks=\(forbidden)\n".utf8))
+
+        table("SMART per stage (sequential)", light)
+        if ProcessInfo.processInfo.environment["CAM98_QA_LIGHT"] == nil {
+            table("DEEP — on demand, runs when the layer is opened", deep)
+        }
+
+        let totalMs = Int(Date().timeIntervalSince(t0) * 1000)
+        CamLog.line("qa smart done items=\(total) leaks=\(forbidden) ms=\(totalMs) wall=\(wallMs)")
+        FileHandle.standardOutput.write(Data(out.utf8))
+        FileHandle.standardOutput.write(Data("qa-smart ok items=\(total) leaks=\(forbidden) smart-wall=\(wallMs)ms\n".utf8))
         exit(0)
+    }
+
+    private final class WallBox: @unchecked Sendable { var ms = 0 }
+
+    /// Runs `stages` through the same bounded-concurrency coordinator the app uses; returns wall ms.
+    private static func parallelWallMs(_ stages: [Scanner.ScanStage]) -> Int {
+        let done = DispatchSemaphore(value: 0)
+        let box = WallBox()
+        Task.detached(priority: .utility) {
+            let start = Date()
+            for await _ in ScanCoordinator.stream(stages, work: { Scanner.safeItems(for: $0) }) {}
+            box.ms = Int(Date().timeIntervalSince(start) * 1000)
+            done.signal()
+        }
+        done.wait()
+        return box.ms
     }
 }

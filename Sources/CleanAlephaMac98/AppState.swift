@@ -180,12 +180,16 @@ final class AppState {
     }
 
     func hasScanned(_ m: Module) -> Bool {
-        if m == .space || m == .tools { return false }
+        if m == .space || m == .tools || m == .uninstaller { return false }
         if resultsDismissed.contains(m) { return false }
         // Smart only after an actual smart scan – never borrow a single layer scan.
         if m == .smart { return scannedModules.contains(.smart) }
-        // After smart scan, every cleanup layer (not live) has those results ready.
-        if scannedModules.contains(.smart) && m.isCleanupModule && !m.isLiveModule { return true }
+        // After smart scan, every light cleanup layer (not live) has those results ready. Layers with
+        // deep stages (Large, Duplicates, Developer's project walk) aren't covered by Smart — they
+        // count as scanned only after their own scan, which opening them starts.
+        if scannedModules.contains(.smart) && m.isCleanupModule && !m.isLiveModule && !m.hasDeepStages {
+            return true
+        }
         return scannedModules.contains(m)
     }
 
@@ -194,6 +198,13 @@ final class AppState {
         let scored: [(Module, Int64)] = kind.modules.map { mod in
             let sum = items.filter { $0.module == mod && $0.bytes > 0 }.reduce(Int64(0)) { $0 + $1.bytes }
             return (mod, sum)
+        }
+        // Nothing found yet but a deep layer (Large / Duplicates) hasn't run → open that one; opening
+        // it starts its scan.
+        if scored.allSatisfy({ $0.1 == 0 }),
+           let pending = kind.modules.first(where: { $0.hasDeepStages && !hasScanned($0) }) {
+            openModuleFromSmart(pending)
+            return
         }
         let pick = scored.max(by: { $0.1 < $1.1 })?.0 ?? kind.modules[0]
         openModuleFromSmart(pick)
@@ -217,6 +228,7 @@ final class AppState {
             returnToModule = nil
             module = m
         }
+        scanDeepLayerIfNeeded()
     }
 
     /// Smart overview tile → layer, with Back to Smart.
@@ -228,6 +240,17 @@ final class AppState {
             pulseFocusStack.removeAll()
             module = m
         }
+        scanDeepLayerIfNeeded()
+    }
+
+    /// Large / Duplicates / Developer carry deep stages Smart skips: opening such a layer that hasn't
+    /// been scanned yet starts its scan right away ("heavy scans on demand"). A layer the user sent
+    /// back to its orb with «Scan again» waits for their own Scan press, as before.
+    private func scanDeepLayerIfNeeded() {
+        guard module.hasDeepStages, !isBusy, !hasScanned(module), !resultsDismissed.contains(module) else {
+            return
+        }
+        requestScan()
     }
 
     var canNavigateBack: Bool {
@@ -410,7 +433,7 @@ final class AppState {
     }
 
     func sidebarBytes(for module: Module) -> Int64 {
-        if module == .space || module == .tools { return 0 }
+        if module == .space || module == .tools || module == .uninstaller { return 0 }
         if module == .pulse, let p = pulse, hasScanned(.pulse) { return p.used }
         if module == .smart {
             return items.filter { $0.bytes > 0 && !$0.module.isLiveModule }.reduce(0) { $0 + $1.bytes }
@@ -649,14 +672,22 @@ final class AppState {
             if hasFinds {
                 scannedModules.insert(scope)
                 if scope == .smart {
-                    for m in Module.allCases where m.isCleanupModule && !m.isLiveModule {
+                    for m in Module.allCases where m.isCleanupModule && !m.isLiveModule && !m.hasDeepStages {
                         scannedModules.insert(m)
                     }
                 }
             }
+            // Stopped a layer's scan while looking at another layer that has its own results
+            // (e.g. back on Smart during a Large scan): keep showing those results.
+            let showOther = module != scope && hasScannedCurrent()
+            if showOther {
+                scanFinished = true
+                statusStopped = false
+                status = Copy.canClear(selected: selectedBytes, found: foundBytes)
+            }
             withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
-                orbFill = hasFinds ? 0.88 : 0.42
-                progress = hasFinds ? 1 : 0
+                orbFill = (hasFinds || showOther) ? 0.88 : 0.42
+                progress = (hasFinds || showOther) ? 1 : 0
             }
             CamLog.line("cancel scan \(scope.rawValue) finds=\(hasFinds)")
         }
@@ -701,8 +732,11 @@ final class AppState {
         refreshFDA()
 
         if scope == .smart {
-            items = []
-            scannedModules = []
+            // Large / Duplicates aren't part of Smart: keep what their own scans found (unless the user
+            // sent that layer back to its orb). Everything Smart covers starts fresh.
+            let keep = Set(scannedModules.filter { $0.isDeepOnly && !resultsDismissed.contains($0) })
+            items.removeAll { !keep.contains($0.module) }
+            scannedModules = keep
             lastFreed = 0
             didCleanThisScan = false
             cleanedInModule = nil
@@ -710,8 +744,11 @@ final class AppState {
         } else {
             items.removeAll { $0.module == scope }
             scannedModules.remove(scope)
-            // Layer scan must not make Smart look scanned.
-            scannedModules.remove(.smart)
+            // A light layer rescan invalidates Smart's snapshot. Opening a deep layer (Large /
+            // Duplicates / Developer) is the normal next step after Smart — keep Smart's results.
+            if !scope.hasDeepStages {
+                scannedModules.remove(.smart)
+            }
         }
 
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -753,7 +790,11 @@ final class AppState {
             scanningStage = result.stage.module
             if result.chunk.failed { stageErrors += 1 }
             items.append(contentsOf: result.chunk.items)
-            scannedModules.insert(result.stage.module)
+            // Smart's light pass doesn't complete a layer that also has deep stages (Developer's
+            // project walk) — that layer finishes when it's opened.
+            if !(scope == .smart && result.stage.module.hasDeepStages) {
+                scannedModules.insert(result.stage.module)
+            }
             if module == scope {
                 status = Copy.scanning(result.stage.module.name)
                 let targetProgress = Double(completedStages) / Double(n)
@@ -818,7 +859,7 @@ final class AppState {
 
         if scope == .smart {
             scannedModules.insert(.smart)
-            for m in Module.allCases where m.isCleanupModule { scannedModules.insert(m) }
+            for m in Module.allCases where m.isCleanupModule && !m.hasDeepStages { scannedModules.insert(m) }
         } else {
             scannedModules.insert(scope)
         }
@@ -826,11 +867,18 @@ final class AppState {
         let empty = items.filter {
             $0.bytes > 0 && (scope == .smart ? true : $0.module == scope)
         }.isEmpty
+        // The user may have navigated elsewhere mid-scan (e.g. Back to Smart while Large scans). That
+        // layer's own results are still valid — show them rather than falling back to the empty orb.
+        let restoreOther = module != scope && hasScannedCurrent()
         withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
             scanning = false
             if module == scope {
                 scanFinished = true
                 orbFill = empty ? 0.12 : 0.88
+                progress = 1
+            } else if restoreOther {
+                scanFinished = true
+                orbFill = 0.88
                 progress = 1
             }
         }
@@ -846,6 +894,9 @@ final class AppState {
             if let note = lastFailureNote {
                 status = Line(ru: "\(status.ru) \(note.ru)", en: "\(status.en) \(note.en)")
             }
+            displayedBytes = selectedBytes
+        } else if restoreOther {
+            status = Copy.canClear(selected: selectedBytes, found: foundBytes)
             displayedBytes = selectedBytes
         }
         completed = true

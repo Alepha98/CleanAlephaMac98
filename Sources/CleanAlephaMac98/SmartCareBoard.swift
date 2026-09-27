@@ -247,14 +247,18 @@ struct SmartCareBoard: View {
     private func tile(_ kind: SmartCareKind, compact: Bool) -> some View {
         let on = active == kind
         let found = bytes(for: kind)
+        // Large + Duplicates are deep layers Smart skips on purpose: "on demand" while Smart runs,
+        // "tap to scan" after — never a misleading "waiting" or "clean".
+        let deferred = found == 0 && isDeferred(kind)
         let detail: String = {
             if mode == .scanning {
-                return on ? state.status.t(lang) : idleDetail(for: kind, found: found)
+                if on { return state.status.t(lang) }
+                return deferred ? Copy.careOnDemand.t(lang) : idleDetail(for: kind, found: found)
             }
             if found > 0 {
                 return ByteFormat.string(found, lang)
             }
-            return Copy.layerClean.t(lang)
+            return deferred ? Copy.careTapToScan.t(lang) : Copy.layerClean.t(lang)
         }()
 
         let content = SmartCareTile(
@@ -273,12 +277,17 @@ struct SmartCareBoard: View {
                 content
             }
             .buttonStyle(.plain)
-            .opacity(found > 0 || on ? 1 : 0.82)
+            .opacity(found > 0 || on || deferred ? 1 : 0.82)
         } else {
             content
                 .opacity(on ? 1 : 0.88)
                 .allowsHitTesting(false)
         }
+    }
+
+    /// A tile with a deep-only layer (Large / Duplicates) that hasn't had its own scan yet.
+    private func isDeferred(_ kind: SmartCareKind) -> Bool {
+        kind.modules.contains { $0.isDeepOnly && !state.hasScanned($0) }
     }
 
     private func idleDetail(for kind: SmartCareKind, found: Int64) -> String {

@@ -26,6 +26,17 @@ final class ProjectArtifactTests: XCTestCase {
         XCTAssertTrue(items.allSatisfy { $0.module == .dev })
     }
 
+    /// Smart gets the build output; the Developer layer's deep stage gets the dependency folders.
+    func testScopeSplitsOutputsFromDependencies() {
+        tree.write("proj/package.json", Data("{}".utf8))
+        tree.write("proj/node_modules/lib/big.bin", FixtureTree.bytes(6 * mb))
+        tree.write("proj/build/out.bin", FixtureTree.bytes(6 * mb))
+        let outputs = Set(ProjectArtifactFinder.find(in: [tree.root], scope: .outputs).map(\.url.lastPathComponent))
+        let deps = Set(ProjectArtifactFinder.find(in: [tree.root], scope: .dependencies).map(\.url.lastPathComponent))
+        XCTAssertEqual(outputs, ["build"])
+        XCTAssertEqual(deps, ["node_modules"])
+    }
+
     func testSkipsTooSmall() {
         tree.write("p/package.json", Data("{}".utf8))
         tree.write("p/node_modules/x.bin", FixtureTree.bytes(mb)) // < 5MB floor

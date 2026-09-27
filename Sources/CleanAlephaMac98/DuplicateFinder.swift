@@ -65,6 +65,9 @@ enum DuplicateFinder {
             for case let url as URL in en {
                 ScanThrottle.tickSync(every: 500, counter: &n) // owns the counter (increments once)
                 if n > config.enumerateCap { break }
+                // Don't descend into dependency/VCS/build trees — hundreds of thousands of tiny files
+                // that are never the duplicates a user cares about, and the biggest time sink.
+                if SimilarImageFinder.skipDirs.contains(url.lastPathComponent) { en.skipDescendants(); continue }
                 if Keep.isProtected(url) { en.skipDescendants(); continue }
                 guard let rv = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
                       rv.isRegularFile == true,
