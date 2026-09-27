@@ -282,6 +282,7 @@ struct ScanView: View {
                 Button(Copy.stop.t(lang)) { state.cancelWork() }
                     .buttonStyle(GhostButton())
                     .keyboardShortcut(.cancelAction)
+                    .actsOnFirstClick()
                     .accessibilityLabel(Copy.stopScan.t(lang))
                     .padding(.top, 2)
                     .transition(.opacity)
@@ -291,6 +292,7 @@ struct ScanView: View {
                         .buttonStyle(PrimaryButton(enabled: state.canScan))
                         .disabled(!state.canScan)
                         .keyboardShortcut(.defaultAction)
+                        .actsOnFirstClick()
                         .accessibilityLabel(Copy.scan.t(lang))
                         .help(Copy.scanHelp.t(lang))
                     if state.showFirstRunQuiet {

@@ -40,6 +40,24 @@ enum Motion {
     }
 }
 
+/// Lets the click that activates an inactive window also press this control. SwiftUI swallows that
+/// first click by default, so after switching over from another app "Scan" needed a second press.
+/// Only for non-destructive controls (scan, stop, navigation) — never Clean, where a click meant to
+/// focus the window must not start deleting.
+struct ActsOnFirstClick: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.allowsWindowActivationEvents(true)
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func actsOnFirstClick() -> some View { modifier(ActsOnFirstClick()) }
+}
+
 struct PrimaryButton: ButtonStyle {
     var enabled: Bool = true
     func makeBody(configuration: Configuration) -> some View {
@@ -314,31 +332,36 @@ struct WindowBackgroundDrag: NSViewRepresentable {
         DragNSView()
     }
 
+    /// Runs on every SwiftUI update of the shell, so it only touches the window when something differs:
+    /// re-assigning the appearance (a fresh NSAppearance object each time) and the autosave name on
+    /// every update made AppKit re-resolve the whole view tree while the user was clicking.
     func updateNSView(_ nsView: NSView, context: Context) {
-        nsView.window?.isMovableByWindowBackground = true
-        nsView.window?.titlebarAppearsTransparent = true
-        nsView.window?.setFrameAutosaveName("CAM98.Main")
-        nsView.window?.appearance = appearance.nsAppearance
-        DragNSView.tidyChrome(nsView.window)
+        guard let window = nsView.window else { return }
+        DragNSView.configure(window)
+        let wanted = appearance.nsAppearance
+        if window.appearance?.name != wanted?.name {
+            window.appearance = wanted
+        }
     }
 }
 
 private final class DragNSView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        window?.isMovableByWindowBackground = true
-        window?.titlebarAppearsTransparent = true
-        window?.setFrameAutosaveName("CAM98.Main")
-        DragNSView.tidyChrome(window)
+        if let window { DragNSView.configure(window) }
     }
 
-    /// No tab bar and no full-screen for this single-window utility — so the top strip is just the
-    /// traffic lights, and the "View" menu (which would otherwise carry "Enter Full Screen") is empty.
-    static func tidyChrome(_ window: NSWindow?) {
-        guard let window else { return }
-        window.tabbingMode = .disallowed
-        window.collectionBehavior.remove(.fullScreenPrimary)
-        window.collectionBehavior.remove(.fullScreenAuxiliary)
+    /// Movable background, transparent title bar, frame autosave — plus no tab bar and no full-screen
+    /// for this single-window utility (the top strip is just the traffic lights, and the "View" menu,
+    /// which would otherwise carry "Enter Full Screen", stays empty). Idempotent and cheap.
+    static func configure(_ window: NSWindow) {
+        if !window.isMovableByWindowBackground { window.isMovableByWindowBackground = true }
+        if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
+        if window.frameAutosaveName != "CAM98.Main" { window.setFrameAutosaveName("CAM98.Main") }
+        if window.tabbingMode != .disallowed { window.tabbingMode = .disallowed }
+        if !window.collectionBehavior.isDisjoint(with: [.fullScreenPrimary, .fullScreenAuxiliary]) {
+            window.collectionBehavior.subtract([.fullScreenPrimary, .fullScreenAuxiliary])
+        }
     }
 }
 

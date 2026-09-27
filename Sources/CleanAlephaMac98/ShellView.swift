@@ -522,6 +522,7 @@ private struct SidebarRow: View {
         }
         .buttonStyle(.plain)
         .modifier(CommandShortcut(module: module))
+        .actsOnFirstClick()
         .disabled(!enabled)
         .opacity(enabled ? 1 : (selected ? 0.72 : 0.45))
         .help(module.shortcutHint.isEmpty ? module.name.t(lang) : "\(module.name.t(lang)) · \(module.shortcutHint)")

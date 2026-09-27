@@ -127,6 +127,8 @@ final class AppState {
     @ObservationIgnored
     private var measuringProtected = false
     @ObservationIgnored
+    private var loggedCaptureGap = false
+    @ObservationIgnored
     private var workTask: Task<Void, Never>?
     @ObservationIgnored
     private var workGeneration = 0
@@ -491,11 +493,14 @@ final class AppState {
         // sits behind macOS's per-app container protection (com.apple.macl), a separate layer — if
         // it stays shut while FDA is granted, the "grant Full Disk Access" card could never go away.
         // Log that case for the hidden-captures scan instead of hiding the grant.
-        hasFDA = sensitiveReadable
-        if sensitiveReadable, !captureReadable {
+        // Assign only on change: with @Observable every set notifies observers, and this runs on each
+        // app activation — re-setting an unchanged value re-rendered the sidebar and main screen.
+        if hasFDA != sensitiveReadable { hasFDA = sensitiveReadable }
+        if sensitiveReadable, !captureReadable, !loggedCaptureGap {
+            loggedCaptureGap = true
             CamLog.line("fda granted, screencapture container still not readable")
         }
-        if hasFDA { dismissedFirstRun = true }
+        if hasFDA, !dismissedFirstRun { dismissedFirstRun = true }
     }
 
     func openFDA() {

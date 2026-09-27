@@ -216,6 +216,7 @@ struct SmartCareBoard: View {
                 Button(Copy.stop.t(lang)) { state.cancelWork() }
                     .buttonStyle(QuietButton())
                     .keyboardShortcut(.cancelAction)
+                    .actsOnFirstClick()
             }
         } else {
             HStack(spacing: 12) {
@@ -229,6 +230,7 @@ struct SmartCareBoard: View {
                 Button(Copy.scanAgain.t(lang)) { state.prepareRescan() }
                     .buttonStyle(QuietButton(enabled: !state.isBusy))
                     .disabled(state.isBusy)
+                    .actsOnFirstClick()
 
                 Button(Copy.safe.t(lang)) { state.selectSafeVisible() }
                     .buttonStyle(GhostButton())
@@ -277,6 +279,7 @@ struct SmartCareBoard: View {
                 content
             }
             .buttonStyle(.plain)
+            .actsOnFirstClick()
             .opacity(found > 0 || on || deferred ? 1 : 0.82)
         } else {
             content

@@ -184,14 +184,25 @@ enum F {
     static func micro() -> Font { .system(size: 10, weight: .semibold) }
 }
 
+@MainActor
 enum Art {
+    private static var cache: [String: NSImage] = [:]
+
+    /// Loaded once per name. These are drawn inside animation frames (the Smart board's active tile
+    /// re-renders at 20 fps): a fresh NSImage per call meant a disk read + PNG decode every frame
+    /// (~2.3 ms each, measured) on the main thread, and SwiftUI could never reuse the rendered bitmap.
     static func image(_ name: String) -> NSImage {
+        if let hit = cache[name] { return hit }
+        let img: NSImage
         if let url = Bundle.main.url(forResource: name, withExtension: "png"),
-           let img = NSImage(contentsOf: url) {
-            img.isTemplate = false
-            return img
+           let loaded = NSImage(contentsOf: url) {
+            loaded.isTemplate = false
+            img = loaded
+        } else {
+            img = NSImage()
         }
-        return NSImage()
+        cache[name] = img
+        return img
     }
 }
 
