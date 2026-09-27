@@ -10,6 +10,7 @@ struct ShellView: View {
         switch state.module {
         case .space: "space"
         case .tools: "tools"
+        case .uninstaller: "uninstaller"
         default: "scan"
         }
     }
@@ -30,6 +31,7 @@ struct ShellView: View {
                     switch state.module {
                     case .space: SpaceView()
                     case .tools: ToolsView()
+                    case .uninstaller: UninstallerView()
                     default: ScanView()
                     }
                 }
@@ -184,10 +186,10 @@ struct SidebarView: View {
     private var groups: [(String, [Module])] {
         [
             (Copy.scanGroup.t(lang), [.smart]),
-            (Copy.cleanGroup.t(lang), [.junk, .mail, .trash, .leftovers, .large, .duplicates, .browsers, .dev, .messengers, .privacy]),
+            (Copy.cleanGroup.t(lang), [.junk, .mail, .trash, .leftovers, .large, .duplicates, .deepSearch, .browsers, .dev, .messengers, .privacy]),
             (Copy.liveGroup.t(lang), [.pulse, .startup]),
             (Copy.guardGroup.t(lang), [.protect]),
-            (Copy.systemGroup.t(lang), [.space, .tools])
+            (Copy.systemGroup.t(lang), [.space, .tools, .uninstaller])
         ]
     }
 
@@ -519,6 +521,7 @@ private struct SidebarRow: View {
             .focusStroke(radius: 10)
         }
         .buttonStyle(.plain)
+        .modifier(CommandShortcut(module: module))
         .disabled(!enabled)
         .opacity(enabled ? 1 : (selected ? 0.72 : 0.45))
         .help(module.shortcutHint.isEmpty ? module.name.t(lang) : "\(module.name.t(lang)) · \(module.shortcutHint)")
@@ -541,6 +544,7 @@ extension Module {
         case .leftovers: "5"
         case .large: "6"
         case .duplicates: "d"
+        case .deepSearch: "f"
         case .browsers: "7"
         case .dev: "8"
         case .messengers: "9"
@@ -550,6 +554,7 @@ extension Module {
         case .pulse: "b"
         case .protect: "k"
         case .startup: "l"
+        case .uninstaller: "u"
         }
     }
 
@@ -562,6 +567,7 @@ extension Module {
         case .leftovers: "⌘5"
         case .large: "⌘6"
         case .duplicates: "⌘D"
+        case .deepSearch: "⌘F"
         case .browsers: "⌘7"
         case .dev: "⌘8"
         case .messengers: "⌘9"
@@ -571,6 +577,7 @@ extension Module {
         case .pulse: "⌘B"
         case .protect: "⌘K"
         case .startup: "⌘L"
+        case .uninstaller: "⌘U"
         }
     }
 }

@@ -1,9 +1,9 @@
 import Foundation
 
 enum Module: String, CaseIterable, Identifiable, Sendable {
-    case smart, junk, mail, trash, leftovers, large, duplicates, browsers, dev, messengers, privacy
+    case smart, junk, mail, trash, leftovers, large, duplicates, deepSearch, browsers, dev, messengers, privacy
     case pulse, protect, startup
-    case space, tools
+    case space, tools, uninstaller
     var id: String { rawValue }
 
     var name: Line {
@@ -15,6 +15,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .leftovers: Copy.moduleLeftovers
         case .large: Copy.moduleLarge
         case .duplicates: Copy.moduleDuplicates
+        case .deepSearch: Copy.moduleDeepSearch
         case .browsers: Copy.moduleBrowsers
         case .dev: Copy.moduleDev
         case .messengers: Copy.moduleMessengers
@@ -24,6 +25,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .startup: Copy.moduleStartup
         case .space: Copy.moduleSpace
         case .tools: Copy.moduleTools
+        case .uninstaller: Copy.moduleUninstaller
         }
     }
 
@@ -36,6 +38,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .leftovers: Copy.subLeftovers
         case .large: Copy.subLarge
         case .duplicates: Copy.subDuplicates
+        case .deepSearch: Copy.subDeepSearch
         case .browsers: Copy.subBrowsers
         case .dev: Copy.subDev
         case .messengers: Copy.subMessengers
@@ -43,16 +46,17 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
         case .pulse: Copy.subPulse
         case .protect: Copy.subProtect
         case .startup: Copy.subStartup
+        case .uninstaller: Copy.subUninstaller
         case .space, .tools: Line(ru: "", en: "")
         }
     }
 
     var isCleanupModule: Bool {
         switch self {
-        case .smart, .junk, .mail, .trash, .leftovers, .large, .duplicates, .browsers, .dev, .messengers,
+        case .smart, .junk, .mail, .trash, .leftovers, .large, .duplicates, .deepSearch, .browsers, .dev, .messengers,
              .privacy, .pulse, .protect, .startup:
             true
-        case .space, .tools:
+        case .space, .tools, .uninstaller:
             false
         }
     }
@@ -66,7 +70,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
 
     var suggestsFDA: Bool {
         switch self {
-        case .smart, .junk, .mail, .browsers, .messengers, .protect, .privacy: true
+        case .smart, .junk, .mail, .browsers, .messengers, .protect, .privacy, .deepSearch: true
         default: false
         }
     }
@@ -281,12 +285,42 @@ enum Keep {
     static func isProtected(_ url: URL) -> Bool {
         let p = url.standardizedFileURL.path
         if pathFragments.contains(where: { p.contains($0) }) { return true }
-        let canonical = url.standardizedFileURL.resolvingSymlinksInPath().path
-        if systemRoots.contains(where: {
-            let root = $0.standardizedFileURL.resolvingSymlinksInPath().path
-            return canonical == root || canonical.hasPrefix(root + "/")
-        }) { return true }
+        if isSystemPath(p) || isSystemPath(url.standardizedFileURL.resolvingSymlinksInPath().path) {
+            return true
+        }
         return isExtraProtected(url)
+    }
+
+    /// Hot-loop form for the fts directory walkers: `p` must be an absolute, standardized, physical
+    /// path (fts never follows symlinks), and `extras` is one snapshot of `extraPaths` — the property
+    /// re-reads UserDefaults on every call. Same rules as `isProtected(_:)` without the per-call
+    /// symlink resolution.
+    static func isProtected(path p: String, extras: [String]) -> Bool {
+        if pathFragments.contains(where: { p.contains($0) }) { return true }
+        if isSystemPath(p) { return true }
+        for extra in extras where p == extra || p.hasPrefix(extra + "/") {
+            return true
+        }
+        return false
+    }
+
+    /// `systemRoots` in every spelling a path can arrive in, computed once (resolving every root on
+    /// every check cost a dozen realpath syscalls per call). Foundation silently drops a leading
+    /// `/private` when the short form exists (`/private/var/folders` → `/var/folders`), so both the
+    /// `/private/…` and the `/var|/tmp|/etc/…` spellings are listed explicitly.
+    private static let systemRootPaths: [String] = Array(Set(systemRoots.flatMap { url -> [String] in
+        let raw = url.path
+        var forms = [raw, url.standardizedFileURL.path, url.standardizedFileURL.resolvingSymlinksInPath().path]
+        if raw.hasPrefix("/private/") {
+            forms.append(String(raw.dropFirst("/private".count)))
+        } else if ["/var/", "/tmp/", "/etc/"].contains(where: { raw.hasPrefix($0) }) || raw == "/tmp" {
+            forms.append("/private" + raw)
+        }
+        return forms
+    }))
+
+    private static func isSystemPath(_ p: String) -> Bool {
+        systemRootPaths.contains { p == $0 || p.hasPrefix($0 + "/") }
     }
 
     /// User exclusions always win, including over narrow built-in opt-in cards.

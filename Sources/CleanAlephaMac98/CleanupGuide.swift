@@ -284,7 +284,7 @@ extension JunkItem {
             return Line(ru: "Текущая нагрузка приложения, процесса или вкладки. Это не дисковый мусор.", en: "Current load from an app, process, or tab. This is not disk junk.")
         case .mail:
             return Line(ru: "Локальные копии почтовых вложений и временные данные Mail.", en: "Local copies of mail attachments and temporary Mail data.")
-        case .junk, .smart:
+        case .junk, .smart, .deepSearch:
             if id.hasPrefix("artifact-file-") {
                 if ArtifactScanner.isSafePresetCard(self) {
                     return Line(
@@ -319,6 +319,8 @@ extension JunkItem {
                 )
             }
             return Line(ru: "Кэш, лог или временные служебные файлы приложения или macOS.", en: "Cache, logs, or temporary support files from an app or macOS.")
+        case .uninstaller:
+            return Line(ru: "Приложение и всё, что оно разложило по диску: кэши, настройки, контейнеры, логи.", en: "An app and everything it spread across the disk: caches, preferences, containers, logs.")
         case .space, .tools:
             return Line(ru: "Информация о занятом месте на диске.", en: "Information about disk usage.")
         }
@@ -368,7 +370,7 @@ extension JunkItem {
             return Line(ru: "Для вкладки действие закроет её. Приложения и системные процессы автоматически не удаляются.", en: "For a tab, the action closes it. Apps and system processes are not automatically removed.")
         case .mail:
             return Line(ru: "Вложения могут загрузиться снова из почтового сервера; без интернета они временно будут недоступны.", en: "Attachments may download again from the mail server; they may be unavailable while offline.")
-        case .junk, .smart:
+        case .junk, .smart, .deepSearch:
             if id.hasPrefix("artifact-file-") {
                 if ArtifactScanner.isSafePresetCard(self) {
                     return Line(
@@ -397,6 +399,8 @@ extension JunkItem {
                 )
             }
             return Line(ru: "Освободится место. Кэш создастся снова при необходимости; документы и настройки останутся.", en: "Space is freed. Cache is recreated when needed; documents and settings stay.")
+        case .uninstaller:
+            return Line(ru: "Приложение и отмеченные файлы переедут в Корзину — их можно вернуть через Finder.", en: "The app and the checked files move to the Trash — Finder can restore them.")
         case .space, .tools:
             return Line(ru: "Ничего не удаляется.", en: "Nothing is removed.")
         }

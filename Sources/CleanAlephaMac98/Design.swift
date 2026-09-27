@@ -34,8 +34,8 @@ enum CareFamily: String, CaseIterable {
         case .protect: .protection
         case .pulse, .startup: .performance
         case .leftovers, .dev: .applications
-        case .large, .duplicates: .clutter
-        case .space, .tools: .system
+        case .large, .duplicates, .deepSearch: .clutter
+        case .space, .tools, .uninstaller: .system
         }
     }
 

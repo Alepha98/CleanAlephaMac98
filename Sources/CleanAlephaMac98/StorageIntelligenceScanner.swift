@@ -196,15 +196,15 @@ enum StorageIntelligenceScanner {
     static func isExplicitCard(_ item: JunkItem) -> Bool {
         let path = canonical(item.url)
         if item.id == "intel-coverage-partial" {
-            return item.module == .junk && item.kind == .advice && item.selected == false
+            return (item.module == .junk || item.module == .deepSearch) && item.kind == .advice && item.selected == false
                 && path == canonical(home)
         }
         guard isBelowScanRoot(item.url), path != canonicalRoot(for: item.url) else { return false }
         if item.id == "intel-ephemeral-\(stableKey(path))" {
-            return item.module == .junk && item.kind == .wipeChildren && isBelowCleanupRoot(item.url)
+            return (item.module == .junk || item.module == .deepSearch) && item.kind == .wipeChildren && isBelowCleanupRoot(item.url)
         }
         let advicePrefixes = ["intel-hotspot-", "intel-media-", "intel-duplicate-"]
-        return item.module == .junk
+        return (item.module == .junk || item.module == .deepSearch)
             && item.kind == .advice
             && advicePrefixes.contains(where: { item.id.hasPrefix($0) })
     }

@@ -153,7 +153,10 @@ enum AutoClean {
     static func runAndExit() -> Never {
         var freed: Int64 = 0
         var failed = 0
-        for stage in Scanner.ScanStage.allCases {
+        // Only Smart's light stages: unattended cleanup can only ever take safe Junk / Browsers /
+        // Developer cards, so walking Large, Duplicates or the forensic hunts here was minutes of
+        // background work whose results were always thrown away.
+        for stage in Scanner.ScanStage.stages(for: .smart) {
             let chunk = Scanner.safeItems(for: stage)
             for item in chunk.items where isUnattended(item) {
                 let outcome = Janitor.clean(item)

@@ -1677,7 +1677,9 @@ enum QAHarness {
             activeCancellation.cancel()
         }
         let activeStarted = Date()
-        let activeChunk = Scanner.safeItems(for: .junk, cancellation: activeCancellation)
+        // The long-running forensic phases live in Deep search now (Junk is fast), so that's the
+        // stage a mid-flight Stop has to interrupt.
+        let activeChunk = Scanner.safeItems(for: .deepSearch, cancellation: activeCancellation)
         let activeElapsed = Date().timeIntervalSince(activeStarted)
         if !activeChunk.items.isEmpty { failures.append("active cancelled scan returned items") }
         if activeElapsed > 12 { failures.append("active scan cancellation took \(activeElapsed)s") }
@@ -1696,6 +1698,10 @@ enum QAHarness {
         exit(2)
     }
 
+    /// Validates every card a Smart scan produces (leaks, sessions, logins, risky defaults, titles,
+    /// guides — exits 2 on any problem) and profiles it the way the app runs it: Smart's light stages
+    /// concurrently (real wall time, cold), then each stage — light first, then the deep on-demand
+    /// ones (skip those with CAM98_QA_LIGHT=1). `--qa-smart-stage=<module>` runs one layer only.
     static func smart() -> Never {
         CamLog.line("qa smart begin")
         let t0 = Date()
@@ -1704,16 +1710,32 @@ enum QAHarness {
         let requestedName = CommandLine.arguments
             .first { $0.hasPrefix("--qa-smart-stage=") }
             .map { String($0.dropFirst("--qa-smart-stage=".count)) }
+        let light = Scanner.ScanStage.stages(for: .smart)
+        let deep = ProcessInfo.processInfo.environment["CAM98_QA_LIGHT"] == nil
+            ? Scanner.ScanStage.allCases.filter(\.isDeep) : []
         let stages = requestedName.map { name in
             Scanner.ScanStage.allCases.filter { $0.module.rawValue == name }
-        } ?? Scanner.ScanStage.allCases
+        } ?? (light + deep)
         if let requestedName, stages.isEmpty {
             FileHandle.standardError.write(Data("qa-smart failed: unknown stage \(requestedName)\n".utf8))
             exit(2)
         }
+
+        var report = ""
+        if requestedName == nil {
+            let wallMs = parallelWallMs(light)
+            SizeCache.shared.clear()   // per-stage timings below shouldn't ride the parallel run's cache
+            report += "\nSMART — light stages, parallel wall time as in the app: \(wallMs) ms\n"
+            report += "  (+ the live Protection/Performance/Startup checks Smart runs after)\n"
+            CamLog.line("qa smart wall=\(wallMs)")
+        }
+        report += "\nstage         items      bytes        sel-bytes     ms\n"
+        report += "-----------------------------------------------------------\n"
+
         for stage in stages {
             if requestedName == nil, Date().timeIntervalSince(t0) > 480 {
                 CamLog.line("qa smart abort remaining after 480s at \(stage.module.rawValue)")
+                report += "(aborted after 480s)\n"
                 break
             }
             let started = Date()
@@ -1771,13 +1793,39 @@ enum QAHarness {
                         + "path=\(PathFormat.tilde(item.url))"
                 )
             }
+            let bytes = chunk.items.reduce(Int64(0)) { $0 + $1.bytes }
+            let selBytes = chunk.items.filter(\.selected).reduce(Int64(0)) { $0 + $1.bytes }
+            let name = "\(stage)\(stage.isDeep ? "*" : "")".padding(toLength: 12, withPad: " ", startingAt: 0)
+            let count = String(chunk.items.count).padding(toLength: 6, withPad: " ", startingAt: 0)
+            let b = ByteFormat.string(bytes, .en).padding(toLength: 11, withPad: " ", startingAt: 0)
+            let sb = ByteFormat.string(selBytes, .en).padding(toLength: 12, withPad: " ", startingAt: 0)
+            report += "\(name)  \(count)  \(b)  \(sb)  \(ms)\(chunk.failed ? "  FAILED" : "")\n"
         }
+        report += "-----------------------------------------------------------\n"
+        report += "* deep stage: runs when its layer is opened, not in Smart\n"
         CamLog.line("qa smart done items=\(total) leaks=\(forbidden) ms=\(Int(Date().timeIntervalSince(t0) * 1000))")
+        FileHandle.standardOutput.write(Data(report.utf8))
         if forbidden == 0 {
             FileHandle.standardOutput.write(Data("qa-smart ok items=\(total) leaks=0\n".utf8))
             exit(0)
         }
         FileHandle.standardError.write(Data("qa-smart failed items=\(total) problems=\(forbidden)\n".utf8))
         exit(2)
+    }
+
+    private final class WallBox: @unchecked Sendable { var ms = 0 }
+
+    /// Runs `stages` through the same bounded-concurrency coordinator the app uses; returns wall ms.
+    private static func parallelWallMs(_ stages: [Scanner.ScanStage]) -> Int {
+        let done = DispatchSemaphore(value: 0)
+        let box = WallBox()
+        Task.detached(priority: .utility) {
+            let start = Date()
+            for await _ in ScanCoordinator.stream(stages, work: { Scanner.safeItems(for: $0) }) {}
+            box.ms = Int(Date().timeIntervalSince(start) * 1000)
+            done.signal()
+        }
+        done.wait()
+        return box.ms
     }
 }

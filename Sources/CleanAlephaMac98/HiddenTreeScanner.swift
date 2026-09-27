@@ -115,7 +115,7 @@ enum HiddenTreeScanner {
 
     static func isExplicitCard(_ item: JunkItem) -> Bool {
         let path = item.url.standardizedFileURL.path
-        guard item.module == .junk, isInAuditScope(item.url), isDotDirectory(item.url),
+        guard item.module == .junk || item.module == .deepSearch, isInAuditScope(item.url), isDotDirectory(item.url),
               isDirectoryWithoutSymlink(item.url) else { return false }
         if item.id == "hidden-tree-audit-\(stableKey(path))" {
             return item.kind == .advice

@@ -6,7 +6,7 @@ struct StageChunk: Sendable {
     var failed: Bool
 }
 
-private struct Gathered: Sendable {
+struct Gathered: Sendable {
     var items: [JunkItem]
     var failed: Bool = false
 }
@@ -76,6 +76,12 @@ enum Scanner {
 
     enum ScanStage: Int, CaseIterable, Sendable {
         case junk, mail, trash, leftovers, large, duplicates, browsers, dev, messengers, privacy
+        /// node_modules / .venv / Pods inside project folders — the heavy half of Developer.
+        case projects
+        /// Forensic hunts (hidden captures, remnants, AI storage, hidden trees…) — minutes of work, so
+        /// they live in their own on-demand layer instead of inside Junk on every Smart scan.
+        case deepSearch
+
         func items(cancellation: ScanCancellation? = nil) -> [JunkItem] {
             switch self {
             case .junk: Scanner.junk(cancellation: cancellation)
@@ -88,6 +94,8 @@ enum Scanner {
             case .dev: Scanner.dev()
             case .messengers: Scanner.messengers()
             case .privacy: DeepScan.privacyItems()
+            case .projects: Scanner.projectArtifacts()
+            case .deepSearch: Scanner.deepSearch(cancellation: cancellation)
             }
         }
 
@@ -100,14 +108,25 @@ enum Scanner {
             case .large: .large
             case .duplicates: .duplicates
             case .browsers: .browsers
-            case .dev: .dev
+            case .dev, .projects: .dev
             case .messengers: .messengers
             case .privacy: .privacy
+            case .deepSearch: .deepSearch
+            }
+        }
+
+        /// Heavy stages that walk / hash / decode tens of GB and only produce off-by-default "review"
+        /// cards. Smart skips them so it stays fast and its one-click clean stays safe; they run when
+        /// their layer is opened. (Measured: these were ~150s of a 163s Smart scan.)
+        var isDeep: Bool {
+            switch self {
+            case .large, .duplicates, .projects, .deepSearch: true
+            default: false
             }
         }
 
         static func stages(for module: Module) -> [ScanStage] {
-            if module == .smart { return Array(allCases) }
+            if module == .smart { return allCases.filter { !$0.isDeep } }
             return allCases.filter { $0.module == module }
         }
     }
@@ -254,26 +273,48 @@ enum Scanner {
         guard appendPhase("junk containers", { enumeratedContainerCaches() }) else { return cancelled() }
         guard appendPhase("junk app-support", { enumeratedAppSupportCaches() }) else { return cancelled() }
         guard appendPhase("junk deep", { DeepScan.junkExtras() }) else { return cancelled() }
-        guard appendPhase("junk hidden-captures", { HiddenCaptureScanner.items() }) else { return cancelled() }
-        guard appendPhase("junk forensic-remnants", { ForensicRemnantScanner.items() }) else { return cancelled() }
-        guard appendPhase("junk screenshot-provenance", { ScreenshotProvenanceScanner.items() }) else { return cancelled() }
-        guard appendPhase("junk deep-media-forensics", {
-            DeepMediaForensicsScanner.items(cancellation: cancellation)
-        }) else { return cancelled() }
-        guard appendPhase("junk system-deep", {
-            SystemDeepScanner.items(cancellation: cancellation)
-        }) else { return cancelled() }
-        guard appendPhase("junk ai-storage", { AIStorageScanner.items(cancellation: cancellation) }) else { return cancelled() }
         guard appendPhase("junk artifacts", { ArtifactScanner.items() }) else { return cancelled() }
-        guard appendPhase("junk hidden-trees", {
-            HiddenTreeScanner.items(cancellation: cancellation)
-        }) else { return cancelled() }
-        guard appendPhase("junk intelligence", {
-            StorageIntelligenceScanner.items(cancellation: cancellation)
-        }) else { return cancelled() }
         guard appendPhase("junk installers", { oldInstallers() }) else { return cancelled() }
         guard appendPhase("junk ios-backups", { oldIOSBackups() }) else { return cancelled() }
         return dedupeByURL(rows).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
+    }
+
+    /// The forensic hunts that used to run inside Junk on every Smart scan (~8 minutes on a full Mac,
+    /// ai-storage alone ~4): hidden captures, forensic remnants, screenshot provenance, deep media,
+    /// the system-deep audit, AI storage, hidden trees, storage intelligence. Same phases, order,
+    /// cancellation and timing logs as before — they just run when the Deep search layer is opened,
+    /// and their cards are re-homed to that layer.
+    static func deepSearch(cancellation: ScanCancellation? = nil) -> [JunkItem] {
+        var rows: [JunkItem] = []
+        func appendPhase(_ label: String, _ work: () -> [JunkItem]) -> Bool {
+            guard cancellation?.isCancelled != true else { return false }
+            rows.append(contentsOf: measured(label, work))
+            return cancellation?.isCancelled != true
+        }
+        guard appendPhase("deep hidden-captures", { HiddenCaptureScanner.items() }),
+              appendPhase("deep forensic-remnants", { ForensicRemnantScanner.items() }),
+              appendPhase("deep screenshot-provenance", { ScreenshotProvenanceScanner.items() }),
+              appendPhase("deep deep-media-forensics", { DeepMediaForensicsScanner.items(cancellation: cancellation) }),
+              appendPhase("deep system-deep", { SystemDeepScanner.items(cancellation: cancellation) }),
+              appendPhase("deep ai-storage", { AIStorageScanner.items(cancellation: cancellation) }),
+              appendPhase("deep hidden-trees", { HiddenTreeScanner.items(cancellation: cancellation) }),
+              appendPhase("deep intelligence", { StorageIntelligenceScanner.items(cancellation: cancellation) })
+        else {
+            CamLog.line("deep search cancelled items=\(rows.count)")
+            return []
+        }
+        return dedupeByURL(rows)
+            .filter { !Keep.isDismissed($0.id) }
+            .map { rehome($0, to: .deepSearch) }
+            .sorted { $0.bytes > $1.bytes }
+    }
+
+    /// Same card, shown in another layer — every other field (id, size, selection, kind) unchanged.
+    static func rehome(_ item: JunkItem, to module: Module) -> JunkItem {
+        JunkItem(
+            id: item.id, module: module, title: item.title, subtitle: item.subtitle, url: item.url,
+            bytes: item.bytes, selected: item.selected, kind: item.kind, keepsLogins: item.keepsLogins
+        )
     }
 
     private static func measured(_ label: String, _ work: () -> [JunkItem]) -> [JunkItem] {
@@ -382,7 +423,7 @@ enum Scanner {
                   Int64(size) >= 20_000_000 else { continue }
             let old = (rv.contentModificationDate ?? .distantPast) < cutoff
             out.append(JunkItem(
-                id: "installer-\(url.lastPathComponent.hashValue)",
+                id: "installer-\(StableID.of(url.standardizedFileURL.path))",
                 module: .junk,
                 title: Line.proper(url.lastPathComponent),
                 subtitle: Line(
@@ -619,6 +660,18 @@ enum Scanner {
         )
     }
 
+    /// Env-guarded profiling mark (CAM98_PROF=1) — splits a composite stage's internal cost.
+    @inline(__always) private static func profMark(_ label: String, _ start: Date) {
+        guard ProcessInfo.processInfo.environment["CAM98_PROF"] != nil else { return }
+        FileHandle.standardError.write(Data("prof \(label) \(Int(Date().timeIntervalSince(start) * 1000))ms\n".utf8))
+    }
+
+    /// Unambiguous dependency / build-tool folders (not generic names like "build") that the
+    /// duplicate walk never descends into.
+    private static let dependencyDirs: Set<String> = [
+        "node_modules", "bower_components", "Pods", "Carthage", "venv", "__pycache__", "DerivedData"
+    ]
+
     private struct DuplicateCandidate {
         let url: URL
         let facts: FileStorageFacts
@@ -676,9 +729,18 @@ enum Scanner {
                 continue
             }
             var n = 0
+            // Time budget per root instead of a 40k entry count: the count silently truncated a
+            // packed Documents/Downloads before reaching most of it. The huge count is a backstop.
+            let deadline = Date().addingTimeInterval(8)
             for case let url as URL in en {
                 n += 1
-                if n > 40_000 { break }
+                if n & 0x3FF == 0, Date() > deadline { break }
+                if n > 3_000_000 { break }
+                // Dependency / build-tool trees: huge file counts, never the duplicates people mean.
+                if Self.dependencyDirs.contains(url.lastPathComponent) {
+                    en.skipDescendants()
+                    continue
+                }
                 if Keep.isProtected(url) {
                     en.skipDescendants()
                     continue
@@ -832,7 +894,7 @@ enum Scanner {
 
     private static func leftovers() -> Gathered {
         let fm = FileManager.default
-        let apps = installedAppNames()
+        let inv = AppInventory.scan()
         let support = home().appendingPathComponent("Library/Application Support")
         var isDir: ObjCBool = false
         let supportExists = fm.fileExists(atPath: support.path, isDirectory: &isDir) && isDir.boolValue
@@ -842,7 +904,7 @@ enum Scanner {
         var out: [JunkItem] = []
         for url in names {
             let name = url.lastPathComponent
-            if leftoverHasOwner(name, apps: apps) { continue }
+            if inv.hasOwner(name) { continue }
             if name.lowercased().hasPrefix("com.apple") { continue }
             // Apple / iCloud support folders that are not an "uninstalled app".
             let systemSupport = Set([
@@ -859,54 +921,6 @@ enum Scanner {
         out.append(contentsOf: DeepScan.leftoverExtras())
         let filtered = dedupeByURL(out).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
         return Gathered(items: filtered, failed: false)
-    }
-
-    /// Skip leftovers that belong to an installed app — names from this Mac, not a fixed machine list.
-    private static func leftoverHasOwner(_ folder: String, apps: [String]) -> Bool {
-        let always = Set(["Apple", "com.apple", "CleanAlephaMac98", "Codex", "com.openai.chat", "ChatGPT"])
-        if always.contains(folder) { return true }
-        let lower = folder.lowercased()
-        if lower.contains("openai"), apps.contains(where: {
-            $0.localizedCaseInsensitiveContains("ChatGPT") || $0.localizedCaseInsensitiveContains("Codex")
-        }) { return true }
-        if lower.contains("anthropic"), apps.contains(where: { $0.localizedCaseInsensitiveContains("Claude") }) {
-            return true
-        }
-        if apps.contains(where: { $0.localizedCaseInsensitiveContains(folder) || folder.localizedCaseInsensitiveContains($0) }) {
-            return true
-        }
-        let aliases: [String: [String]] = [
-            "Google": ["Google Chrome", "Chrome", "Google"],
-            "Cursor": ["Cursor"],
-            "Claude": ["Claude"],
-            "com.openai.chat": ["ChatGPT", "OpenAI"],
-            "Telegram Desktop": ["Telegram"],
-            "Figma": ["Figma"],
-            "Code": ["Visual Studio Code", "Code"],
-            "zoom.us": ["zoom.us", "Zoom"],
-            "Chromium": ["Chromium"],
-            "Microsoft Edge": ["Microsoft Edge", "Edge"],
-            "BraveSoftware": ["Brave Browser", "Brave"],
-            "adspower_global": ["AdsPower", "adspower"],
-            "dolphin_anty": ["dolphin_anty", "Dolphin{anty}"],
-            "Yandex": ["Yandex"]
-        ]
-        if let names = aliases[folder] {
-            return names.contains { alias in
-                apps.contains { $0.localizedCaseInsensitiveContains(alias) }
-            }
-        }
-        return false
-    }
-
-    private static func installedAppNames() -> [String] {
-        var names: [String] = []
-        for root in ["/Applications", NSHomeDirectory() + "/Applications"] {
-            if let xs = try? FileManager.default.contentsOfDirectory(atPath: root) {
-                names += xs.map { $0.replacingOccurrences(of: ".app", with: "") }
-            }
-        }
-        return names
     }
 
     private struct LargeCandidate {
@@ -941,12 +955,19 @@ enum Scanner {
                 if isDir.boolValue { failed = true }
                 continue
             }
-            var depthGuard = 0
+            var walked = 0
             let deepRoot = root.path.contains("/Library/")
-            let limit = deepRoot ? 8_000 : 14_000
+            // Bound the walk by TIME, not entry count. A count cap silently truncated real results on a
+            // packed disk (the enumerator hit the ceiling before reaching big files deeper in the tree).
+            // A wall-clock budget keeps latency bounded even on a pathological folder yet reads a fast,
+            // large disk to the end — one stat per entry is microseconds. The enumerator never follows
+            // symlinks (no loops), and the heavy trees below are still pruned. The huge count is only a
+            // last-ditch backstop, not the working limit.
+            let deadline = Date().addingTimeInterval(6)
             for case let url as URL in en {
-                depthGuard += 1
-                if depthGuard > limit { break }
+                walked += 1
+                if walked & 0x3FF == 0, Date() > deadline { break }
+                if walked > 3_000_000 { break }
                 if skip.contains(url.lastPathComponent) { en.skipDescendants(); continue }
                 if sessionAdjacent.contains(url.lastPathComponent) || Keep.names.contains(url.lastPathComponent) {
                     en.skipDescendants()
@@ -1043,7 +1064,7 @@ enum Scanner {
         let items = found
             .filter { !Keep.isDismissed($0.id) }
             .sorted { $0.bytes > $1.bytes }
-        return Gathered(items: Array(items.prefix(120)), failed: failed)
+        return Gathered(items: Array(items.prefix(250)), failed: failed)
     }
 
     private static func browsers() -> [JunkItem] {
@@ -1213,15 +1234,19 @@ enum Scanner {
 
         var out: [JunkItem] = []
         var seen = 0
+        // Time budget, not a count cap: an antidetect browser can hold hundreds of profiles, and the
+        // old 4k ceiling could stop before their cache folders were all seen.
+        let deadline = Date().addingTimeInterval(4)
         for case let url as URL in en {
             seen += 1
-            if seen > 4_000 { break }
+            if seen & 0x1FF == 0, Date() > deadline { break }
+            if seen > 2_000_000 { break }
             let name = url.lastPathComponent
             guard profileCacheNames.contains(name) else { continue }
             // Only shallow-ish cache dirs (avoid walking into every blob inside)
             en.skipDescendants()
             guard let item = folderItem(
-                id: "b-\(brand)-\(url.path.hashValue)",
+                id: "b-\(brand)-\(StableID.of(url.standardizedFileURL.path))",
                 module: .browsers,
                 title: Line(ru: "\(brand) – \(name)", en: "\(brand) – \(name)"),
                 subtitle: Line(ru: "Только кэш профиля", en: "Profile cache only"),
@@ -1243,7 +1268,24 @@ enum Scanner {
             item("swiftpm", .dev, Line.proper("SwiftPM cache"), Line.proper("org.swift.swiftpm"), "Library/Caches/org.swift.swiftpm"),
             item("pnpm", .dev, Line.proper("pnpm cache"), Line.proper("Library/Caches/pnpm"), "Library/Caches/pnpm")
         ].compactMap { $0 }
+        let td = Date()
         rows.append(contentsOf: DeepScan.devExtras())
+        profMark("dev.extras", td)
+        // Build output inside projects (build/, .next, target, __pycache__…) regenerates itself and is
+        // on by default — the biggest safe win on a dev machine, so it rides along with Smart.
+        let to = Date()
+        rows.append(contentsOf: ProjectArtifactFinder.find(in: ProjectArtifactFinder.defaultRoots(), scope: .outputs))
+        profMark("dev.outputs", to)
+        return dedupeByURL(rows).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
+    }
+
+    /// The deep half of Developer: dependency folders inside projects (node_modules / .venv / Pods).
+    /// Off by default (they need a reinstall) and the heaviest trees to size — sized only when the
+    /// Developer layer is opened.
+    private static func projectArtifacts() -> [JunkItem] {
+        let tp = Date()
+        let rows = ProjectArtifactFinder.find(in: ProjectArtifactFinder.defaultRoots(), scope: .dependencies)
+        profMark("dev.dependencies", tp)
         return dedupeByURL(rows).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
     }
 
@@ -1252,7 +1294,7 @@ enum Scanner {
         for account in telegramAccounts() {
             let acc = account.lastPathComponent
             if let x = messengerFolder(
-                id: "tg-m-\(account.path.hashValue)",
+                id: "tg-m-\(StableID.of(account.standardizedFileURL.path))",
                 title: Line(ru: "Telegram медиа", en: "Telegram media"),
                 subtitle: Line.proper(acc),
                 url: account.appendingPathComponent("postbox/media"),
@@ -1262,7 +1304,7 @@ enum Scanner {
                 rows.append(x)
             }
             if let x = messengerFolder(
-                id: "tg-d-\(account.path.hashValue)",
+                id: "tg-d-\(StableID.of(account.standardizedFileURL.path))",
                 title: Line(ru: "Telegram история", en: "Telegram history"),
                 subtitle: Line(ru: "Локальная база, по умолчанию выкл", en: "Local database, off by default"),
                 url: account.appendingPathComponent("postbox/db"),
@@ -1436,5 +1478,19 @@ enum Scanner {
             }
         }
         return total
+    }
+}
+
+extension Module {
+    /// Some of this layer's stages are deep (Smart skips them) — opening the layer runs them.
+    var hasDeepStages: Bool {
+        Scanner.ScanStage.allCases.contains { $0.module == self && $0.isDeep }
+    }
+
+    /// Smart runs none of this layer's stages (Large files, Duplicates): it only ever has results
+    /// from its own scan, so those results survive a new Smart scan.
+    var isDeepOnly: Bool {
+        let own = Scanner.ScanStage.allCases.filter { $0.module == self }
+        return !own.isEmpty && own.allSatisfy(\.isDeep)
     }
 }
