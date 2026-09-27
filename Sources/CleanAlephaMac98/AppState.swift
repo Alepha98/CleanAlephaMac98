@@ -487,7 +487,14 @@ final class AppState {
         let sensitiveReadable = protectedProbes.contains { probe in
             (try? FileManager.default.contentsOfDirectory(atPath: probe.path)) != nil
         }
-        hasFDA = captureReadable && sensitiveReadable
+        // Full Disk Access is what the TCC-protected folders say. The screencapture group container
+        // sits behind macOS's per-app container protection (com.apple.macl), a separate layer — if
+        // it stays shut while FDA is granted, the "grant Full Disk Access" card could never go away.
+        // Log that case for the hidden-captures scan instead of hiding the grant.
+        hasFDA = sensitiveReadable
+        if sensitiveReadable, !captureReadable {
+            CamLog.line("fda granted, screencapture container still not readable")
+        }
         if hasFDA { dismissedFirstRun = true }
     }
 
