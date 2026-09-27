@@ -17,9 +17,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         // No window tabs: kills the tab bar (the title "pill" + the "+" new-tab button) app-wide.
         NSWindow.allowsAutomaticWindowTabbing = false
-        // AppKit injects "Enter Full Screen" into View, which kept an otherwise empty View menu alive.
-        // The window opts out of full screen anyway (DragNSView), so drop the item → no View menu.
-        UserDefaults.standard.register(defaults: ["NSFullScreenMenuItemEverywhere": false])
 
         // `open -n` during installs spawned 3 copies, each burning ~30% CPU on the orb.
         let id = Bundle.main.bundleIdentifier ?? "com.alepha98.CleanAlephaMac98"
@@ -37,6 +34,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    /// SwiftUI keeps a View menu even with its sidebar/toolbar groups replaced by nothing, and AppKit
+    /// parks "Enter Full Screen" in it (the window opts out of full screen). SwiftUI can rebuild the
+    /// menu bar on any command change, so hollow menus are dropped before each update.
+    func applicationWillUpdate(_ notification: Notification) {
+        guard let bar = NSApp.mainMenu else { return }
+        for item in bar.items.reversed() {
+            guard let menu = item.submenu, !item.title.isEmpty else { continue }
+            let hollow = menu.items.allSatisfy {
+                $0.isSeparatorItem || $0.action == #selector(NSWindow.toggleFullScreen(_:))
+            }
+            if hollow { bar.removeItem(item) }
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
