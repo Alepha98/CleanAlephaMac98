@@ -60,6 +60,8 @@ struct ShellView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             state.refreshFDA()
+            // The user may have just quit Chrome/Telegram to let their caches go.
+            state.refreshSessionBlocks()
         }
         .onReceive(NotificationCenter.default.publisher(for: .cam98Scan)) { _ in
             if state.hasScannedCurrent() && state.scanFinished && !state.isBusy {

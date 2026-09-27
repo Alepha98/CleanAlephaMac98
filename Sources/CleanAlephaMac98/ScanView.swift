@@ -538,12 +538,20 @@ struct ScanView: View {
                             .contentTransition(.numericText())
                             .accessibilityLabel(selectionLine)
                     }
+                    let blocked = state.blockedSelection
                     if let note = state.lastFailureNote {
                         let offerFDA = Copy.offersFDA(note)
                         BannerWarn(
                             text: note.t(lang),
                             actionTitle: offerFDA ? Copy.settings.t(lang) : nil,
                             action: offerFDA ? { state.openFDA() } : nil
+                        )
+                    } else if blocked.bytes > 0, !state.cleaning {
+                        // Say it before Clean: these caches belong to apps that are open right now.
+                        BannerWarn(
+                            text: Copy.blockedByOpenApps(blocked.bytes, apps: blocked.apps).t(lang),
+                            actionTitle: nil,
+                            action: nil
                         )
                     } else if state.statusStopped {
                         BannerInfo(text: state.status.t(lang))

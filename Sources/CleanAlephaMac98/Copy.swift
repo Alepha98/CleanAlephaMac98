@@ -655,6 +655,16 @@ enum Copy {
         )
     }
 
+    /// Shown before Clean: part of the selection belongs to apps that are open right now.
+    static func blockedByOpenApps(_ bytes: Int64, apps: [String]) -> Line {
+        let names = apps.joined(separator: ", ")
+        let one = apps.count == 1
+        return Line(
+            ru: "≈\(ByteFormat.string(bytes, .ru)) из выбранного не очистить, пока открыты \(names) — закрой и нажми «Очистить» ещё раз. Сессии не трогаем.",
+            en: "≈\(ByteFormat.string(bytes, .en)) of the selection can't be cleaned while \(names) \(one ? "is" : "are") open — quit \(one ? "it" : "them") and press Clean again. Sessions stay intact."
+        )
+    }
+
     static func closeAppsFirst(_ apps: [String], freed: Int64, failed: Int) -> Line {
         let names = apps.joined(separator: ", ")
         if freed > 0 {

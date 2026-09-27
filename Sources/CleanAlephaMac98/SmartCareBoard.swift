@@ -184,28 +184,56 @@ struct SmartCareBoard: View {
                 .foregroundStyle(onWash)
                 .shadow(color: .black.opacity(scheme == .dark ? 0.22 : 0), radius: 6, y: 1)
         } else {
+            // What Clean will actually free right now: caches of open apps (Chrome, Telegram, Claude…)
+            // are refused by SessionGuard, so they are shown apart instead of inflating the headline.
+            let blocked = state.blockedSelection
+            let selected = state.selectedBytes
+            let headline = selected > 0 ? max(0, selected - blocked.bytes) : state.foundBytes
             HStack(alignment: .firstTextBaseline, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(Copy.canClean.t(lang))
                         .font(F.callout())
                         .foregroundStyle(onWashSecondary)
                         .shadow(color: .black.opacity(scheme == .dark ? 0.22 : 0), radius: 6, y: 1)
-                    Text(ByteFormat.string(state.selectedBytes > 0 ? state.selectedBytes : state.foundBytes, lang))
+                    Text(ByteFormat.string(headline, lang))
                         .font(F.heroSize())
                         .foregroundStyle(onWash)
                         .contentTransition(.numericText())
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .shadow(color: .black.opacity(scheme == .dark ? 0.22 : 0), radius: 6, y: 1)
-                    if state.foundBytes > state.selectedBytes, state.selectedBytes > 0 {
+                    if state.foundBytes > selected, selected > 0 {
                         Text(Copy.foundLine(state.foundBytes).t(lang))
                             .font(F.callout())
                             .foregroundStyle(onWashSecondary)
+                    }
+                    if blocked.bytes > 0 {
+                        noteLine(Copy.blockedByOpenApps(blocked.bytes, apps: blocked.apps).t(lang))
+                    } else if state.didCleanThisScan, let note = state.lastFailureNote {
+                        // A clean that freed less than promised must say why, right here.
+                        noteLine(note.t(lang))
                     }
                 }
                 Spacer(minLength: 0)
             }
         }
+    }
+
+    /// A short explanation under the headline (what's held back, or why a clean freed less).
+    private func noteLine(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            CamIcon(glyph: .warn, size: 13)
+                .foregroundStyle(onWash)
+                .padding(.top, 2)
+            Text(text)
+                .font(F.callout())
+                .foregroundStyle(onWash)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 2)
+        .shadow(color: .black.opacity(scheme == .dark ? 0.22 : 0), radius: 6, y: 1)
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder

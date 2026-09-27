@@ -1721,6 +1721,8 @@ enum QAHarness {
             exit(2)
         }
 
+        var blockedBytes: Int64 = 0
+        var blockedApps = Set<String>()
         var report = ""
         if requestedName == nil {
             let wallMs = parallelWallMs(light)
@@ -1795,6 +1797,12 @@ enum QAHarness {
             }
             let bytes = chunk.items.reduce(Int64(0)) { $0 + $1.bytes }
             let selBytes = chunk.items.filter(\.selected).reduce(Int64(0)) { $0 + $1.bytes }
+            for item in chunk.items where item.selected {
+                if let app = SessionGuard.blockingOwner(for: item) {
+                    blockedBytes += item.bytes
+                    blockedApps.insert(app)
+                }
+            }
             let name = "\(stage)\(stage.isDeep ? "*" : "")".padding(toLength: 12, withPad: " ", startingAt: 0)
             let count = String(chunk.items.count).padding(toLength: 6, withPad: " ", startingAt: 0)
             let b = ByteFormat.string(bytes, .en).padding(toLength: 11, withPad: " ", startingAt: 0)
@@ -1803,6 +1811,7 @@ enum QAHarness {
         }
         report += "-----------------------------------------------------------\n"
         report += "* deep stage: runs when its layer is opened, not in Smart\n"
+        report += "selected but held by open apps (Clean refuses them until they quit): \(ByteFormat.string(blockedBytes, .en))\(blockedApps.isEmpty ? "" : " — " + blockedApps.sorted().joined(separator: ", "))\n"
         CamLog.line("qa smart done items=\(total) leaks=\(forbidden) ms=\(Int(Date().timeIntervalSince(t0) * 1000))")
         FileHandle.standardOutput.write(Data(report.utf8))
         if forbidden == 0 {

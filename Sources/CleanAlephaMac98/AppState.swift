@@ -128,6 +128,38 @@ final class AppState {
     private var measuringProtected = false
     @ObservationIgnored
     private var loggedCaptureGap = false
+
+    /// Cards whose cache belongs to an app that is open right now (card id → app name). `SessionGuard`
+    /// refuses those at clean time to keep the app's session intact, so the UI must say so *before*
+    /// Clean is pressed — otherwise "11 GB can be cleaned" frees nothing while Chrome/Telegram are
+    /// open. Recomputed off the main thread after scans, after cleans and on app activation.
+    var sessionBlocked: [String: String] = [:]
+
+    func refreshSessionBlocks() {
+        let candidates = items.filter { $0.bytes > 0 && !$0.module.isLiveModule }
+        guard !candidates.isEmpty else {
+            if !sessionBlocked.isEmpty { sessionBlocked = [:] }
+            return
+        }
+        Task { @MainActor in
+            let map = await Background.run { () -> [String: String] in
+                var out: [String: String] = [:]
+                for item in candidates {
+                    if let app = SessionGuard.blockingOwner(for: item) { out[item.id] = app }
+                }
+                return out
+            }
+            if map != sessionBlocked { sessionBlocked = map }
+        }
+    }
+
+    /// Selected cards in the current view that an open app will make Clean refuse right now.
+    var blockedSelection: (bytes: Int64, apps: [String]) {
+        guard !sessionBlocked.isEmpty else { return (0, []) }
+        let blocked = visibleItems().filter { $0.selected && $0.bytes > 0 && sessionBlocked[$0.id] != nil }
+        let apps = Set(blocked.compactMap { sessionBlocked[$0.id] }).sorted()
+        return (blocked.reduce(Int64(0)) { $0 + $1.bytes }, apps)
+    }
     @ObservationIgnored
     private var workTask: Task<Void, Never>?
     @ObservationIgnored
@@ -942,6 +974,7 @@ final class AppState {
             displayedBytes = selectedBytes
         }
         completed = true
+        refreshSessionBlocks()
         CamLog.line("scan done \(scope.rawValue) items=\(items.filter { $0.module == scope || scope == .smart }.count) empty=\(empty) errors=\(stageErrors)")
         if module == scope { GlassTick.play() }
     }
@@ -1117,7 +1150,9 @@ final class AppState {
                 failed += 1
                 if let app = outcome.blockedApp { blockedApps.insert(app) }
                 if let i = items.firstIndex(where: { $0.id == item.id }) {
-                    items[i].selected = false
+                    // Refused only because its app is open: keep it selected, so "quit the app, press
+                    // Clean again" just works. Any other failure is deselected as before.
+                    if outcome.blockedApp == nil { items[i].selected = false }
                     if outcome.leftover > 0 {
                         items[i].bytes = outcome.leftover
                     }
@@ -1179,9 +1214,11 @@ final class AppState {
         if freed > 0 {
             CamNotify.cleaned(freed: freed, lang: copyLang)
         }
+        CamLog.line("clean done \(scope.rawValue) jobs=\(jobs.count) freed=\(freed) failed=\(failed) blocked=\(blockedApps.sorted().joined(separator: ","))")
         withAnimation(Motion.easeMicro) {
             items.removeAll { $0.bytes <= 0 }
         }
+        refreshSessionBlocks()
     }
 }
 
