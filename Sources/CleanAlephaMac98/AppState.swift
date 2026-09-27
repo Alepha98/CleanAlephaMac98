@@ -121,7 +121,7 @@ final class AppState {
 
     /// All non-zero cards in the current layer — what we found, not only selection.
     var foundBytes: Int64 {
-        visibleItems().filter { $0.bytes > 0 }.reduce(0) { $0 + $1.bytes }
+        visibleItems().reduce(0) { $0 + $1.reclaimableBytes }
     }
 
     @ObservationIgnored
@@ -130,6 +130,11 @@ final class AppState {
     private var workTask: Task<Void, Never>?
     @ObservationIgnored
     private var workGeneration = 0
+    @ObservationIgnored
+    private var scanCancellation: ScanCancellation?
+    /// Remains true until the synchronous worker has actually drained after Stop.
+    /// This prevents a second scan from overlapping a cancelled disk walk.
+    private var scanWorkerActive = false
     /// Module currently being scanned/cleaned – sidebar stays open for the rest.
     @ObservationIgnored
     private(set) var busyModule: Module?
@@ -152,14 +157,15 @@ final class AppState {
 
     var isBusy: Bool { scanning || cleaning }
 
-    var canScan: Bool { !isBusy }
+    var canScan: Bool { !isBusy && !scanWorkerActive }
 
     var canClean: Bool {
-        !isBusy && module.isCleanupModule && hasScannedCurrent() && selectedBytes > 0
+        !isBusy && !scanWorkerActive && module.isCleanupModule && hasScannedCurrent() && selectedBytes > 0
     }
 
     var canSelectSafe: Bool {
-        !isBusy && module.isCleanupModule && hasScannedCurrent() && visibleItems().contains { $0.bytes > 0 }
+        !isBusy && module.isCleanupModule && hasScannedCurrent()
+            && visibleItems().contains { $0.bytes > 0 && $0.isSafePreset && !$0.selected }
     }
 
     var canDeselect: Bool {
@@ -192,7 +198,8 @@ final class AppState {
     /// Smart Care family tile → best layer, with Back to Smart.
     func openCareKind(_ kind: SmartCareKind) {
         let scored: [(Module, Int64)] = kind.modules.map { mod in
-            let sum = items.filter { $0.module == mod && $0.bytes > 0 }.reduce(Int64(0)) { $0 + $1.bytes }
+            let sum = items.filter { $0.module == mod }
+                .reduce(Int64(0)) { $0 + $1.reclaimableBytes }
             return (mod, sum)
         }
         let pick = scored.max(by: { $0.1 < $1.1 })?.0 ?? kind.modules[0]
@@ -406,20 +413,21 @@ final class AppState {
     }
 
     func bytes(in module: Module) -> Int64 {
-        items.filter { $0.module == module && $0.bytes > 0 }.reduce(0) { $0 + $1.bytes }
+        items.filter { $0.module == module }.reduce(0) { $0 + $1.reclaimableBytes }
     }
 
     func sidebarBytes(for module: Module) -> Int64 {
         if module == .space || module == .tools { return 0 }
         if module == .pulse, let p = pulse, hasScanned(.pulse) { return p.used }
         if module == .smart {
-            return items.filter { $0.bytes > 0 && !$0.module.isLiveModule }.reduce(0) { $0 + $1.bytes }
+            return items.filter { !$0.module.isLiveModule }
+                .reduce(0) { $0 + $1.reclaimableBytes }
         }
         return bytes(in: module)
     }
 
     func visibleItems() -> [JunkItem] {
-        let pool = cleaning ? items : items.filter { $0.bytes > 0 }
+        let pool = cleaning ? items : items.filter(\.hasVisibleFinding)
         let scoped: [JunkItem]
         if module == .smart {
             scoped = pool.filter { !$0.module.isLiveModule }
@@ -443,15 +451,20 @@ final class AppState {
 
     func refreshFDA() {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let probes = [
+        let protectedProbes = [
             home.appendingPathComponent("Library/Messages/Attachments"),
             home.appendingPathComponent("Library/Messages"),
-            home.appendingPathComponent("Library/Containers/com.apple.Safari"),
-            home.appendingPathComponent("Library/Group Containers")
+            home.appendingPathComponent("Library/Containers/com.apple.Safari")
         ]
-        hasFDA = probes.contains { probe in
+        let capture = home.appendingPathComponent(
+            "Library/Group Containers/group.com.apple.screencapture/ScreenRecordings"
+        )
+        let captureReadable = !FileManager.default.fileExists(atPath: capture.path)
+            || (try? FileManager.default.contentsOfDirectory(atPath: capture.path)) != nil
+        let sensitiveReadable = protectedProbes.contains { probe in
             (try? FileManager.default.contentsOfDirectory(atPath: probe.path)) != nil
         }
+        hasFDA = captureReadable && sensitiveReadable
         if hasFDA { dismissedFirstRun = true }
     }
 
@@ -586,11 +599,15 @@ final class AppState {
     func selectSafeVisible() {
         guard !isBusy else { return }
         let ids = Set(visibleItems().filter { $0.bytes > 0 }.map(\.id))
-        for i in items.indices where ids.contains(items[i].id) {
-            items[i].selected = items[i].isSafePreset
-        }
+        Self.applySafeSelection(to: &items, visibleIDs: ids)
         withAnimation(Motion.easeMicro) {
             displayedBytes = selectedBytes
+        }
+    }
+
+    nonisolated static func applySafeSelection(to items: inout [JunkItem], visibleIDs: Set<String>) {
+        for i in items.indices where visibleIDs.contains(items[i].id) && items[i].isSafePreset {
+            items[i].selected = true
         }
     }
 
@@ -622,7 +639,7 @@ final class AppState {
 
     @MainActor
     func requestClean() {
-        guard module.isCleanupModule, !isBusy else { return }
+        guard module.isCleanupModule, !isBusy, !scanWorkerActive else { return }
         workTask = Task { @MainActor in
             await clean()
         }
@@ -635,6 +652,7 @@ final class AppState {
             return
         }
         workGeneration += 1
+        scanCancellation?.cancel()
         workTask?.cancel()
         workTask = nil
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -642,7 +660,9 @@ final class AppState {
             let scope = busyModule ?? module
             scanning = false
             busyModule = nil
-            let hasFinds = items.contains { $0.bytes > 0 && (scope == .smart ? !$0.module.isLiveModule : $0.module == scope) }
+            let hasFinds = items.contains {
+                $0.hasVisibleFinding && (scope == .smart ? !$0.module.isLiveModule : $0.module == scope)
+            }
             scanFinished = hasFinds
             statusStopped = true
             status = hasFinds ? Copy.scanStoppedPartial : Copy.scanStoppedEmpty
@@ -679,7 +699,7 @@ final class AppState {
 
     @MainActor
     func scan() async {
-        guard !scanning, !cleaning else { return }
+        guard !scanning, !cleaning, !scanWorkerActive else { return }
         let scope = module
         if scope.isLiveModule {
             await scanLive(scope)
@@ -689,6 +709,9 @@ final class AppState {
         guard !stages.isEmpty else { return }
 
         let gen = workGeneration
+        let cancellation = ScanCancellation()
+        scanCancellation = cancellation
+        scanWorkerActive = true
         busyModule = scope
         scanning = true
         scanningStage = nil
@@ -717,13 +740,19 @@ final class AppState {
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         var completed = false
         defer {
+            if scanCancellation === cancellation {
+                scanCancellation = nil
+                scanWorkerActive = false
+                workTask = nil
+            }
             if busyModule == scope { busyModule = nil }
             if isCurrentWork(gen) { scanningStage = nil }
             if !completed, isCurrentWork(gen) {
                 scanning = false
                 lastFailureNote = nil
                 let hasFinds = items.contains {
-                    $0.bytes > 0 && (scope == .smart ? !$0.module.isLiveModule : $0.module == scope)
+                    $0.hasVisibleFinding
+                        && (scope == .smart ? !$0.module.isLiveModule : $0.module == scope)
                 }
                 scanFinished = hasFinds
                 statusStopped = true
@@ -756,7 +785,7 @@ final class AppState {
                 }
             }
             let chunk = await Background.run {
-                Scanner.safeItems(for: stage)
+                Scanner.safeItems(for: stage, cancellation: cancellation)
             }
             guard isCurrentWork(gen) else { return }
             if chunk.failed { stageErrors += 1 }
@@ -827,7 +856,7 @@ final class AppState {
         }
 
         let empty = items.filter {
-            $0.bytes > 0 && (scope == .smart ? true : $0.module == scope)
+            $0.hasVisibleFinding && (scope == .smart ? true : $0.module == scope)
         }.isEmpty
         withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
             scanning = false
@@ -859,6 +888,7 @@ final class AppState {
     @MainActor
     func scanLive(_ scope: Module) async {
         let gen = workGeneration
+        scanWorkerActive = true
         busyModule = scope
         scanning = true
         scanFinished = false
@@ -874,6 +904,8 @@ final class AppState {
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         var completed = false
         defer {
+            scanWorkerActive = false
+            workTask = nil
             if busyModule == scope { busyModule = nil }
             if !completed, isCurrentWork(gen) {
                 scanning = false
@@ -996,6 +1028,7 @@ final class AppState {
         var freed: Int64 = 0
         var remaining = startSelected
         var failed = 0
+        var blockedApps = Set<String>()
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         withAnimation(Motion.easeMicro) {
             cleaning = true
@@ -1021,6 +1054,7 @@ final class AppState {
             lastFreed = freed
             if outcome.failed {
                 failed += 1
+                if let app = outcome.blockedApp { blockedApps.insert(app) }
                 if let i = items.firstIndex(where: { $0.id == item.id }) {
                     items[i].selected = false
                     if outcome.leftover > 0 {
@@ -1064,7 +1098,14 @@ final class AppState {
         didCleanThisScan = true
         cleanedInModule = scope
 
-        if failed == 0 {
+        if !blockedApps.isEmpty {
+            status = Copy.closeAppsFirst(
+                Array(blockedApps).sorted(),
+                freed: freed,
+                failed: failed
+            )
+            lastFailureNote = status
+        } else if failed == 0 {
             status = freed > 0 ? Copy.doneFreed(freed) : Copy.alreadyGone
         } else if freed > 0 {
             status = Copy.someFailed(freed: freed, failed: failed)

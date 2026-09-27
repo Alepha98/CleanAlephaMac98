@@ -13,7 +13,6 @@ enum DeepScan {
         rows.append(contentsOf: fixedHiddenCaches())
         rows.append(contentsOf: enumeratedGroupContainerCaches())
         rows.append(contentsOf: enumeratedAppSupportLogs())
-        rows.append(contentsOf: enumeratedHTTPStorages())
         rows.append(contentsOf: enumeratedWebKit())
         rows.append(contentsOf: enumeratedLibraryOrphans())
         return rows
@@ -143,7 +142,9 @@ enum DeepScan {
             ("discord-code", Line(ru: "Discord Code Cache", en: "Discord Code Cache"), "Library/Application Support/discord/Code Cache", Line(ru: "Не чаты", en: "Not chats"), true),
             ("slack", Line(ru: "Кэш Slack", en: "Slack cache"), "Library/Application Support/Slack/Cache", Line(ru: "Не переписка", en: "Not messages"), true),
             ("slack-gpu", Line(ru: "Slack GPUCache", en: "Slack GPUCache"), "Library/Application Support/Slack/GPUCache", Line(ru: "Шейдеры", en: "Shaders"), true),
-            ("zoom", Line(ru: "Кэш Zoom", en: "Zoom cache"), "Library/Application Support/zoom.us/data", Line(ru: "Временные данные Zoom", en: "Zoom temp data"), true),
+            // Application Support/zoom.us/data can hold account/session state. Only the
+            // dedicated system cache is a safe cleanup boundary.
+            ("zoom", Line(ru: "Кэш Zoom", en: "Zoom cache"), "Library/Caches/us.zoom.xos", Line(ru: "Аккаунт и настройки целы", en: "Account and settings stay"), true),
             ("steam", Line(ru: "Кэш Steam", en: "Steam cache"), "Library/Application Support/Steam/appcache", Line(ru: "Не игры", en: "Not game installs"), true),
             ("adobe-media", Line(ru: "Adobe Media Cache", en: "Adobe Media Cache"), "Library/Application Support/Adobe/Common/Media Cache Files", Line(ru: "Premiere/After Effects", en: "Premiere/After Effects"), true),
             ("adobe-peak", Line(ru: "Adobe Peak Files", en: "Adobe Peak Files"), "Library/Application Support/Adobe/Common/Peak Files", Line(ru: "Пики аудио", en: "Audio peaks"), true),
@@ -155,7 +156,6 @@ enum DeepScan {
             ("onedrive", Line(ru: "Кэш OneDrive", en: "OneDrive cache"), "Library/Caches/com.microsoft.OneDrive", Line(ru: "Не облако", en: "Not cloud files"), true),
             ("diagnostic", Line(ru: "DiagnosticReports", en: "DiagnosticReports"), "Library/Logs/DiagnosticReports", Line(ru: "Отчёты о падениях", en: "Crash diagnostics"), true),
             ("ios-software", Line(ru: "Обновления iOS (кэш)", en: "iOS software updates"), "Library/iTunes/iPhone Software Updates", Line(ru: "Старые IPSW. Выкл.", en: "Old IPSW. Off."), false),
-            ("mobile-docs-tmp", Line(ru: "Временные iCloud Drive", en: "iCloud Drive temp"), "Library/Application Support/CloudDocs/session/temp", Line(ru: "Временные сессии", en: "Session temp"), true),
             ("helpd", Line.proper("Helpd cache"), "Library/Caches/com.apple.helpd", Line(ru: "Индексы справки", en: "Help indexes"), true),
             ("geo", Line.proper("GeoServices cache"), "Library/Caches/GeoServices", Line(ru: "Карты/гео", en: "Maps/geo"), true),
             ("fontreg", Line(ru: "Кэш шрифтов", en: "Font registry cache"), "Library/Caches/com.apple.FontRegistry", Line(ru: "Пересоберётся", en: "Rebuilds"), true),
@@ -190,7 +190,7 @@ enum DeepScan {
             includingPropertiesForKeys: [.isDirectoryKey],
             options: []
         ) else { return [] }
-        var out: [JunkItem] = []
+        var measuredCandidates: [(id: String, url: URL)] = []
         var n = 0
         for container in kids {
             ScanThrottle.tickSync(every: 12, counter: &n)
@@ -199,29 +199,32 @@ enum DeepScan {
             if Keep.isProtected(container) { continue }
             let cache = container.appendingPathComponent("Library/Caches")
             // Some put Caches under Data/Library/Caches
-            let candidates = [
+            let paths = [
                 cache,
                 container.appendingPathComponent("Data/Library/Caches")
             ]
-            for url in candidates {
+            for url in paths {
                 var isDir: ObjCBool = false
                 guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { continue }
-                let b = DiskSizer.bytes(at: url)
-                guard b >= minBytes else { continue }
-                out.append(JunkItem(
-                    id: "gcache-\(id)-\(url.path.hashValue)",
-                    module: .junk,
-                    title: Line(ru: "Group · \(short(id))", en: "Group · \(short(id))"),
-                    subtitle: Line(ru: "Group Containers / Caches", en: "Group Containers / Caches"),
-                    url: url,
-                    bytes: b,
-                    selected: !id.hasPrefix("com.apple"),
-                    kind: .wipeChildren,
-                    keepsLogins: false
-                ))
+                measuredCandidates.append((id, url))
             }
         }
-        return out
+        let sizes = DiskSizer.batchBytes(at: measuredCandidates.map(\.url), timeout: 7)
+        return measuredCandidates.compactMap { candidate in
+            let bytes = sizes[candidate.url.standardizedFileURL.path] ?? 0
+            guard bytes >= minBytes else { return nil }
+            return JunkItem(
+                id: "gcache-\(candidate.id)-\(candidate.url.path.hashValue)",
+                module: .junk,
+                title: Line(ru: "Group · \(short(candidate.id))", en: "Group · \(short(candidate.id))"),
+                subtitle: Line(ru: "Group Containers / Caches", en: "Group Containers / Caches"),
+                url: candidate.url,
+                bytes: bytes,
+                selected: !candidate.id.hasPrefix("com.apple"),
+                kind: .wipeChildren,
+                keepsLogins: false
+            )
+        }
     }
 
     private static func enumeratedAppSupportLogs() -> [JunkItem] {
@@ -242,7 +245,7 @@ enum DeepScan {
             if Keep.isProtected(app) { continue }
             for leaf in leaves {
                 let url = app.appendingPathComponent(leaf)
-                let b = DiskSizer.bytes(at: url)
+                guard let b = DiskSizer.boundedBytes(at: url, timeout: 1.2) else { continue }
                 guard b >= minBytes else { continue }
                 out.append(JunkItem(
                     id: "aslog-\(name)-\(leaf)",
@@ -256,36 +259,6 @@ enum DeepScan {
                     keepsLogins: false
                 ))
             }
-        }
-        return out
-    }
-
-    private static func enumeratedHTTPStorages() -> [JunkItem] {
-        let root = home.appendingPathComponent("Library/HTTPStorages")
-        let fm = FileManager.default
-        guard let kids = try? fm.contentsOfDirectory(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: []
-        ) else { return [] }
-        var out: [JunkItem] = []
-        for url in kids {
-            let name = url.lastPathComponent
-            if name.hasPrefix("com.apple.") { continue }
-            if Keep.isProtected(url) { continue }
-            let b = DiskSizer.bytes(at: url)
-            guard b >= minBytes else { continue }
-            out.append(JunkItem(
-                id: "http-\(name)",
-                module: .junk,
-                title: Line(ru: "HTTP · \(short(name))", en: "HTTP · \(short(name))"),
-                subtitle: Line(ru: "Library/HTTPStorages", en: "Library/HTTPStorages"),
-                url: url,
-                bytes: b,
-                selected: true,
-                kind: .wipeChildren,
-                keepsLogins: false
-            ))
         }
         return out
     }
@@ -304,7 +277,7 @@ enum DeepScan {
             if Keep.isProtected(url) { continue }
             // WebsiteData often holds more than cache — default off for non-obvious
             let cache = url.appendingPathComponent("WebsiteData/Cache")
-            let b = DiskSizer.bytes(at: cache)
+            let b = DiskSizer.boundedBytes(at: cache, timeout: 1.2) ?? 0
             if b >= minBytes {
                 out.append(JunkItem(
                     id: "webkit-\(name)",
@@ -325,7 +298,7 @@ enum DeepScan {
     /// Orphan-ish piles under Library that aren't full leftovers.
     private static func enumeratedLibraryOrphans() -> [JunkItem] {
         let fixed: [(String, Line, String, Line, Bool)] = [
-            ("savedstate-big", Line(ru: "Saved Application State", en: "Saved Application State"), "Library/Saved Application State", Line(ru: "Снимки окон", en: "Window snapshots"), true),
+            ("savedstate-big", Line(ru: "Saved Application State", en: "Saved Application State"), "Library/Saved Application State", Line(ru: "Снимки окон. По умолчанию выкл.", en: "Window snapshots. Off by default."), false),
             ("maps", Line(ru: "Кэш Карт", en: "Maps cache"), "Library/Caches/com.apple.geod", Line(ru: "Офлайн-тайлы", en: "Offline tiles"), true),
             ("siri-tts", Line(ru: "Голоса Siri (кэш)", en: "Siri voices cache"), "Library/Caches/com.apple.SiriTTSService", Line(ru: "Голоса скачаются снова", en: "Voices re-download"), false),
             ("mail-cache", Line(ru: "Кэш Mail", en: "Mail cache"), "Library/Containers/com.apple.mail/Data/Library/Caches", Line(ru: "Не письма", en: "Not mailboxes"), true)
@@ -358,8 +331,13 @@ enum DeepScan {
             return []
         }
         var out: [JunkItem] = []
+        let covered = Set([
+            "ms-playwright", "go-build", "pnpm", "pip", "CocoaPods", "Yarn",
+            "GeoServices", "com.apple.geod", "org.swift.swiftpm", "org.carthage.CarthageKit"
+        ])
         for url in kids {
             let name = url.lastPathComponent
+            if covered.contains(name) { continue }
             if name.hasPrefix("com.apple") { continue }
             if Keep.isProtected(url) { continue }
             if leftoverHasOwner(name, apps: apps) { continue }
@@ -484,9 +462,15 @@ enum DeepScan {
     }
 
     private static func leftoverHasOwner(_ folder: String, apps: [String]) -> Bool {
-        let always = Set(["Apple", "com.apple", "CleanAlephaMac98"])
+        let always = Set(["Apple", "com.apple", "CleanAlephaMac98", "Codex", "com.openai.chat", "ChatGPT"])
         if always.contains(folder) { return true }
         let lower = folder.lowercased()
+        if lower.contains("openai"), apps.contains(where: {
+            $0.localizedCaseInsensitiveContains("ChatGPT") || $0.localizedCaseInsensitiveContains("Codex")
+        }) { return true }
+        if lower.contains("anthropic"), apps.contains(where: { $0.localizedCaseInsensitiveContains("Claude") }) {
+            return true
+        }
         if apps.contains(where: {
             let a = $0.lowercased()
             return a.contains(lower) || lower.contains(a)

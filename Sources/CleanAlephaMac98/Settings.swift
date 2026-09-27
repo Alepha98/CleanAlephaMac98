@@ -168,6 +168,9 @@ enum AutoClean {
     /// Unattended: caches only. Media, Trash, leftovers, history stay for a person to confirm.
     static func isUnattended(_ item: JunkItem) -> Bool {
         guard item.isSafePreset, item.selected else { return false }
+        // Heuristically discovered caches are safe only after live revalidation, but a
+        // first-time unknown app store should still require an interactive cleanup.
+        if item.id.hasPrefix("intel-") { return false }
         switch item.module {
         case .junk, .browsers, .dev: return true
         default: return false

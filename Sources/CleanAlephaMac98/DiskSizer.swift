@@ -10,6 +10,42 @@ enum DiskSizer {
         return walk(url)
     }
 
+    /// Enumeration-safe measurement. A sandbox container that cannot be read must not
+    /// consume the normal 12-second `du` budget and stall the whole Smart Scan.
+    static func boundedBytes(at url: URL, timeout: TimeInterval) -> Int64? {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return 0 }
+        if Keep.isProtected(url) { return 0 }
+        if !isDir.boolValue { return fileSize(url) }
+        return duSK(url, timeout: timeout)
+    }
+
+    /// One `du` process for a whole enumeration stage. This caps the stage once instead
+    /// of paying a timeout for every sandbox container that macOS refuses to traverse.
+    static func batchBytes(at urls: [URL], timeout: TimeInterval) -> [String: Int64] {
+        var seen = Set<String>()
+        let paths = urls.compactMap { url -> String? in
+            let path = url.standardizedFileURL.path
+            guard !seen.contains(path), !Keep.isProtected(url),
+                  FileManager.default.fileExists(atPath: path) else { return nil }
+            seen.insert(path)
+            return path
+        }
+        guard !paths.isEmpty else { return [:] }
+        ScanThrottle.beginWorker()
+        let ran = CamProcess.run(path: "/usr/bin/du", arguments: ["-sk"] + paths, timeout: timeout)
+        ScanThrottle.reliefIfNeeded()
+        var result: [String: Int64] = [:]
+        for line in ran.out.split(whereSeparator: \.isNewline) {
+            let fields = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: true)
+            guard fields.count == 2, let kb = Int64(fields[0].trimmingCharacters(in: .whitespaces)) else {
+                continue
+            }
+            result[String(fields[1])] = kb * 1024
+        }
+        return result
+    }
+
     /// Trash bins often hold packages (.app, .dmg mounts). Prefer `du`, then a walk that
     /// does not skip package descendants or hidden names inside the bin.
     static func trashBytes(at url: URL) -> Int64 {

@@ -49,7 +49,14 @@ struct ScanView: View {
     }
 
     private var selectionLine: String? {
-        let live = visible.filter { $0.bytes > 0 }
+        let live: [JunkItem]
+        if state.module == .pulse {
+            // RAM/app rows are measurements and drill-down links, not cleanup choices.
+            // Only real browser-tab rows can be selected and closed.
+            live = visible.filter { $0.bytes > 0 && $0.kind == .closeTab }
+        } else {
+            live = visible.filter { $0.reclaimableBytes > 0 }
+        }
         guard !live.isEmpty else { return nil }
         let n = live.filter(\.selected).count
         return Copy.selected(n, of: live.count).t(lang)
@@ -83,6 +90,9 @@ struct ScanView: View {
             if justCleanedEmpty {
                 return Copy.orbFreed(state.lastFreed).t(lang)
             }
+            if state.module == .pulse, let pulse = state.pulse {
+                return Copy.orbMemoryUsed(pulse.used).t(lang)
+            }
             return Copy.orbCanClean(state.selectedBytes).t(lang)
         }
         return Copy.orbIdle.t(lang)
@@ -94,7 +104,12 @@ struct ScanView: View {
         return state.selectedBytes
     }
 
-    private var liveFootnote: String { "" }
+    private var liveFootnote: String {
+        if state.module == .pulse, state.pulseFocus == nil {
+            return Copy.pulseOverviewNote.t(lang)
+        }
+        return ""
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -154,7 +169,13 @@ struct ScanView: View {
                         if state.module == .smart {
                             Color.clear
                         } else {
-                            C.bgTop.opacity(0.92)
+                            Rectangle()
+                                .fill(.ultraThinMaterial)
+                                .overlay(alignment: .bottom) {
+                                    Rectangle()
+                                        .fill(C.hairline.opacity(0.45))
+                                        .frame(height: 1)
+                                }
                         }
                     }
                 }
@@ -267,8 +288,8 @@ struct ScanView: View {
             } else {
                 VStack(spacing: S.sm) {
                     Button(Copy.scan.t(lang)) { state.requestScan() }
-                        .buttonStyle(PrimaryButton(enabled: !state.isBusy))
-                        .disabled(state.isBusy)
+                        .buttonStyle(PrimaryButton(enabled: state.canScan))
+                        .disabled(!state.canScan)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityLabel(Copy.scan.t(lang))
                         .help(Copy.scanHelp.t(lang))
@@ -361,19 +382,7 @@ struct ScanView: View {
                 Spacer(minLength: 0)
             }
             .padding(20)
-            .background {
-                RoundedRectangle(cornerRadius: S.cardRadius + 4, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: S.cardRadius + 4, style: .continuous)
-                            .fill(Color.white.opacity(0.10))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: S.cardRadius + 4, style: .continuous)
-                            .stroke(Color.white.opacity(0.28), lineWidth: 1)
-                    )
-                    .shadow(color: Color.black.opacity(0.18), radius: 16, y: 6)
-            }
+            .camFunctionalGlass(family: .smart)
             .padding(.horizontal, hPad)
             .padding(.top, 18)
             .padding(.bottom, 14)
@@ -503,7 +512,7 @@ struct ScanView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                     }
-                    .accessibilityLabel(Copy.orbCanClean(shownBytes).t(lang))
+                    .accessibilityLabel(orbLabel)
                     if !state.cleaning, !state.module.isLiveModule, state.foundBytes > state.selectedBytes {
                         Text(Copy.foundLine(state.foundBytes).t(lang))
                             .font(F.callout())
@@ -545,7 +554,7 @@ struct ScanView: View {
                 Spacer(minLength: 0)
             }
             .padding(20)
-            .background(CardBackground())
+            .camFunctionalGlass(family: CareFamily.of(state.module))
             .padding(.horizontal, hPad)
             .padding(.top, 18)
             .padding(.bottom, 14)
@@ -690,11 +699,13 @@ struct PulseFocusPane: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(.horizontal, hPad)
+            .padding(.horizontal, S.lg)
             .padding(.top, 20)
             .padding(.bottom, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(C.bgTop.opacity(0.55))
+            .camFunctionalGlass(family: .performance, radius: S.cardRadius + 4)
+            .padding(.horizontal, hPad)
+            .padding(.top, 12)
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -715,10 +726,6 @@ struct PulseFocusPane: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            LinearGradient(colors: [C.bgTop, C.bgBot], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
-        )
     }
 
     @ViewBuilder
@@ -746,7 +753,7 @@ struct PulseDetailRow: View {
     @State private var hover = false
     @State private var busyAction = false
 
-    private var emptied: Bool { item.bytes <= 0 }
+    private var emptied: Bool { item.bytes <= 0 && item.kind != .advice }
     private var isApp: Bool { item.id.hasPrefix("pulse-app-") }
     private var isTab: Bool { item.id.hasPrefix("pulse-tab:") }
     private var isChild: Bool { item.id.hasPrefix("pulse-child:") }
@@ -782,13 +789,14 @@ struct PulseDetailRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(C.iconWell)
-                    CamIcon(glyph: emptied ? .check : Glyph(item: item), size: 16)
-                        .foregroundStyle(emptied ? C.secondary : C.accentText)
-                }
-                .frame(width: 32, height: 32)
+                GlassIconWell(
+                    glyph: emptied ? .check : Glyph(item: item),
+                    family: CareFamily.of(item.module),
+                    selected: item.selected && !emptied,
+                    muted: emptied,
+                    size: 32,
+                    glyphSize: 16
+                )
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.title.t(lang))
@@ -861,7 +869,13 @@ struct PulseDetailRow: View {
         .padding(S.md)
         .frame(maxWidth: .infinity, alignment: .leading)
         .opacity(emptied ? 0.62 : 1)
-        .background(CardBackground(selected: item.selected && isTab && !emptied, hover: hover))
+        .background(
+            CardBackground(
+                selected: item.selected && isTab && !emptied,
+                hover: hover,
+                family: CareFamily.of(item.module)
+            )
+        )
         .focusStroke(radius: S.cardRadius)
         .onHover { hover = $0 && !emptied }
         .animation(Motion.easeHover, value: hover)
@@ -914,13 +928,14 @@ struct SmartSectionTile: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 8) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(fam.mid.opacity(hover ? 0.28 : 0.18))
-                        CamIcon(glyph: Glyph(module: module), size: 16)
-                            .foregroundStyle(Color.white.opacity(0.92))
-                    }
-                    .frame(width: 30, height: 30)
+                    GlassIconWell(
+                        glyph: Glyph(module: module),
+                        family: fam,
+                        selected: hover,
+                        size: 30,
+                        glyphSize: 16,
+                        lightInk: true
+                    )
                     Spacer(minLength: 0)
                     Text(bytes > 0 ? ByteFormat.string(bytes, lang) : Copy.layerClean.t(lang))
                         .font(F.size())
@@ -990,8 +1005,9 @@ struct ResultCard: View {
     @Environment(AppState.self) private var state
     @Environment(\.copyLang) private var lang
     @State private var hover = false
+    @State private var expanded = false
 
-    private var emptied: Bool { item.bytes <= 0 }
+    private var emptied: Bool { item.bytes <= 0 && item.kind != .advice }
     private var muted: Bool { !emptied && item.isSecondaryRisk && !item.selected }
     private var canToggle: Bool { enabled && !emptied && item.kind != .advice }
     private var canDrill: Bool {
@@ -1001,9 +1017,14 @@ struct ResultCard: View {
                 || item.id == "pulse-cpu"
         )
     }
+    private var guide: CleanupGuide { item.cleanupGuide }
+    private var family: CareFamily { CareFamily.of(item.module) }
 
     private var sizeLabel: String {
         if emptied { return Copy.emptied.t(lang) }
+        if item.kind == .advice, item.bytes <= 0 {
+            return lang == .ru ? "размер скрыт" : "size unavailable"
+        }
         if item.id == "pulse-cpu" {
             if let busy = state.pulse?.cpuBusy { return "\(Int(busy))%" }
         }
@@ -1031,62 +1052,139 @@ struct ResultCard: View {
     }
 
     var body: some View {
-        Button(action: cardAction) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(item.selected && !emptied ? C.action.opacity(0.18) : C.iconWell)
-                        CamIcon(glyph: emptied ? .check : Glyph(item: item), size: 16)
-                            .foregroundStyle(emptied ? C.secondary : (item.selected ? C.accentText : C.secondary.opacity(muted ? 0.7 : 1)))
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: cardAction) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        GlassIconWell(
+                            glyph: emptied ? .check : Glyph(item: item),
+                            family: family,
+                            selected: item.selected && !emptied,
+                            muted: muted || emptied,
+                            size: 30,
+                            glyphSize: 16
+                        )
+                        Spacer()
+                        Text(sizeLabel)
+                            .font(F.size())
+                            .foregroundStyle(C.secondary)
                     }
-                    .frame(width: 28, height: 28)
-                    Spacer()
-                    Text(sizeLabel)
-                        .font(F.size())
-                        .foregroundStyle(C.secondary)
-                }
-                Text(item.title.t(lang))
-                    .font(F.title())
-                    .foregroundStyle(emptied || muted ? C.secondary : C.ink)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                if !item.subtitle.t(lang).isEmpty {
-                    Text(item.subtitle.t(lang))
-                        .font(F.callout())
-                        .foregroundStyle(C.secondary.opacity(muted || emptied ? 0.75 : 1))
-                        .lineLimit(emptied ? 1 : 3)
+                    Text(item.userFacingTitle.t(lang))
+                        .font(F.title())
+                        .foregroundStyle(emptied || muted ? C.secondary : C.ink)
+                        .lineLimit(2)
                         .multilineTextAlignment(.leading)
+                    if !item.subtitle.t(lang).isEmpty {
+                        Text(item.subtitle.t(lang))
+                            .font(F.callout())
+                            .foregroundStyle(C.secondary.opacity(muted || emptied ? 0.75 : 1))
+                            .lineLimit(emptied ? 1 : 3)
+                            .multilineTextAlignment(.leading)
+                    }
+                    Text(guide.summary.t(lang))
+                        .font(F.callout())
+                        .foregroundStyle(guide.disposition == .safe ? C.accentText : C.secondary)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                    HStack(spacing: 6) {
+                        if emptied {
+                            MicroBadge(text: Copy.emptied.t(lang), tone: .quiet)
+                        } else {
+                            if canToggle {
+                                CamIcon(glyph: item.selected ? .selectOn : .selectOff, size: 16)
+                                    .foregroundStyle(item.selected ? C.action : C.secondary.opacity(0.35))
+                            }
+                            MicroBadge(text: guide.disposition.badge.t(lang), tone: dispositionTone)
+                            if item.keepsLogins {
+                                MicroBadge(text: Copy.loginsBadge.t(lang), tone: .safe)
+                            }
+                            if let caution = item.cautionBadge, guide.disposition != .readOnly {
+                                MicroBadge(text: caution.t(lang), tone: .caution)
+                            }
+                            if muted {
+                                MicroBadge(text: Copy.offBadge.t(lang), tone: .quiet)
+                            }
+                        }
+                        Spacer()
+                    }
                 }
-                HStack(spacing: 6) {
-                    if emptied {
-                        MicroBadge(text: Copy.emptied.t(lang), tone: .quiet)
-                    } else {
-                        if canToggle {
-                            CamIcon(glyph: item.selected ? .selectOn : .selectOff, size: 16)
-                                .foregroundStyle(item.selected ? C.action : C.secondary.opacity(0.35))
-                        }
-                        if item.keepsLogins {
-                            MicroBadge(text: Copy.loginsBadge.t(lang), tone: .safe)
-                        }
-                        if let caution = item.cautionBadge {
-                            MicroBadge(text: caution.t(lang), tone: .caution)
-                        }
-                        if muted {
-                            MicroBadge(text: Copy.offBadge.t(lang), tone: .quiet)
+                .padding(S.md)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: emptied ? 96 : (item.module == .large ? 128 : 154),
+                    alignment: .topLeading
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(CardPressStyle())
+            .disabled(!canToggle && !canDrill)
+            .accessibilityLabel("\(item.userFacingTitle.t(lang)), \(emptied ? Copy.emptied.t(lang) : ByteFormat.string(item.bytes, lang))")
+            .accessibilityValue(emptied ? Copy.emptied.t(lang) : (item.selected ? Copy.selectedOn.t(lang) : Copy.selectedOff.t(lang)))
+            .accessibilityAddTraits(emptied || !canToggle ? [] : .isToggle)
+
+            if !emptied {
+                Divider()
+                    .overlay(C.hairline.opacity(0.5))
+                    .padding(.horizontal, S.md)
+                Button {
+                    withAnimation(Motion.easeMicro) { expanded.toggle() }
+                } label: {
+                    HStack(spacing: 7) {
+                        Text(expanded ? Copy.hideDetails.t(lang) : Copy.details.t(lang))
+                            .font(F.callout().weight(.semibold))
+                        Spacer(minLength: 8)
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(C.secondary)
+                    .padding(.horizontal, S.md)
+                    .padding(.vertical, 11)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(expanded ? Copy.hideDetails.t(lang) : Copy.details.t(lang))
+
+                if expanded {
+                    VStack(alignment: .leading, spacing: 12) {
+                        guideSection(Copy.whatIsThis, guide.what)
+                        guideSection(Copy.whatChanges, guide.effect)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(Copy.exactLocation.t(lang).uppercased())
+                                .font(F.micro())
+                                .tracking(0.5)
+                                .foregroundStyle(C.secondary.opacity(0.78))
+                            Text(PathFormat.tilde(item.url))
+                                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                .foregroundStyle(C.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
                         }
                     }
-                    Spacer()
+                    .padding(S.sm)
+                    .background(
+                        RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                            .fill(family.softFill.opacity(0.72))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                                    .stroke(family.softStroke.opacity(0.60), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal, S.md)
+                    .padding(.bottom, S.md)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
-            .padding(S.md)
-            .frame(maxWidth: .infinity, minHeight: emptied ? 96 : (item.module == .large ? 108 : 132), alignment: .topLeading)
-            .opacity(emptied ? 0.62 : (muted ? 0.88 : 1))
-            .background(CardBackground(selected: item.selected && !emptied, hover: hover && (canToggle || canDrill)))
-            .focusStroke(radius: S.cardRadius)
         }
-        .buttonStyle(CardPressStyle())
-        .disabled(!canToggle && !canDrill)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .opacity(emptied ? 0.62 : (muted ? 0.88 : 1))
+        .background(
+            CardBackground(
+                selected: item.selected && !emptied,
+                hover: hover,
+                family: family
+            )
+        )
+        .focusStroke(radius: S.cardRadius)
         .contextMenu {
             if item.id.hasPrefix("pulse-tab:") {
                 Button(Copy.showTab.t(lang)) {
@@ -1127,14 +1225,32 @@ struct ResultCard: View {
                 }
             }
         }
-        .accessibilityLabel("\(item.title.t(lang)), \(emptied ? Copy.emptied.t(lang) : ByteFormat.string(item.bytes, lang))")
-        .accessibilityValue(emptied ? Copy.emptied.t(lang) : (item.selected ? Copy.selectedOn.t(lang) : Copy.selectedOff.t(lang)))
-        .accessibilityAddTraits(emptied || !canToggle ? [] : .isToggle)
-        .accessibilityHint(emptied ? "" : (canDrill ? Copy.pulseInside.t(lang) : (item.keepsLogins ? Copy.loginsBadge.t(lang) : (muted ? Copy.defaultOff.t(lang) : ""))))
-        .onHover { hover = (canToggle || canDrill) && $0 }
-        .scaleEffect(hover && (canToggle || canDrill) ? Motion.hoverLift : 1)
+        .onHover { hover = $0 }
+        .scaleEffect(hover ? Motion.hoverLift : 1)
         .animation(Motion.easeHover, value: hover)
         .animation(Motion.easeMicro, value: emptied)
+        .animation(Motion.easeMicro, value: expanded)
+    }
+
+    private var dispositionTone: MicroBadge.Tone {
+        switch guide.disposition {
+        case .safe: .safe
+        case .choice: .caution
+        case .readOnly: .quiet
+        }
+    }
+
+    private func guideSection(_ heading: Line, _ text: Line) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(heading.t(lang).uppercased())
+                .font(F.micro())
+                .tracking(0.5)
+                .foregroundStyle(C.secondary.opacity(0.78))
+            Text(text.t(lang))
+                .font(F.callout())
+                .foregroundStyle(C.ink)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func cardAction() {

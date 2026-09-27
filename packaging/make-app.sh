@@ -23,6 +23,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/CleanAlephaMac98"
 cp "$ROOT/packaging/Info.plist" "$APP/Contents/Info.plist"
+cp "$ROOT/packaging/PrivacyInfo.xcprivacy" "$APP/Contents/Resources/PrivacyInfo.xcprivacy"
 cp "$ROOT/packaging/Resources/"*.png "$APP/Contents/Resources/"
 if ls "$ROOT/packaging/Resources/"*.wav >/dev/null 2>&1; then
   cp "$ROOT/packaging/Resources/"*.wav "$APP/Contents/Resources/"

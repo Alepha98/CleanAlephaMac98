@@ -66,7 +66,7 @@ enum Module: String, CaseIterable, Identifiable, Sendable {
 
     var suggestsFDA: Bool {
         switch self {
-        case .smart, .mail, .browsers, .messengers, .protect, .privacy: true
+        case .smart, .junk, .mail, .browsers, .messengers, .protect, .privacy: true
         default: false
         }
     }
@@ -76,6 +76,7 @@ enum CleanKind: Sendable, Equatable {
     case wipeChildren
     case safariNetworkCache
     case deleteItem
+    case deleteCaptureRemnants
     case emptyTrash
     case advice
     case removeAgent
@@ -95,26 +96,51 @@ struct JunkItem: Identifiable, Equatable, Sendable {
     let kind: CleanKind
     let keepsLogins: Bool
 
+    /// Bytes that the app can honestly present as removable. Audit rows may describe
+    /// large system stores, but they are not cleanup promises and must not inflate totals.
+    var reclaimableBytes: Int64 {
+        kind == .advice ? 0 : max(0, bytes)
+    }
+
+    /// Read-only findings remain visible even when macOS does not expose their size.
+    var hasVisibleFinding: Bool {
+        bytes > 0 || kind == .advice
+    }
+
     /// Large files / Telegram history / rebuild caches / duplicates – quieter when unchecked.
     var isSecondaryRisk: Bool {
+        if kind == .advice { return true }
+        if kind == .deleteCaptureRemnants { return true }
         if module == .pulse { return kind == .closeTab || kind == .advice }
         if module == .duplicates { return true }
         if module == .startup { return kind != .advice }
         if module == .protect { return kind == .advice || id.hasPrefix("unsigned-") }
         if module == .large { return true }
         if id.contains("tg-d-") { return true }
+        if [
+            "state", "liborphan-savedstate-big", "cloudkit-cache",
+            "dev-playwright", "dev-xcode-ios-device", "dev-sim-caches",
+            "deep-ios-software", "deep-siri-tts"
+        ].contains(id) { return true }
         if kind == .deleteItem { return true }
         if isRebuildCache { return true }
         return false
     }
 
-    /// huggingface / codex-runtimes — expensive to wipe by default.
+    /// Large reproducible downloads that are expensive to rebuild.
     var isRebuildCache: Bool {
-        id == "dotcache-huggingface" || id == "dotcache-codex-runtimes"
+        id == "dotcache-huggingface"
+            || id == "dotcache-codex-runtimes"
+            || id == "dev-playwright"
+            || id == "dev-xcode-ios-device"
+            || id == "dev-sim-caches"
     }
 
     /// Preset for «Безопасное»: caches on, trash / leftovers / history / huge off.
     var isSafePreset: Bool {
+        if kind == .advice { return false }
+        if HiddenCaptureScanner.isSafePresetCard(self) { return true }
+        if ArtifactScanner.isSafePresetCard(self) { return true }
         if module == .pulse { return kind == .closeTab }
         if module == .startup { return false }
         if module == .protect { return !isSecondaryRisk }
@@ -127,6 +153,23 @@ struct JunkItem: Identifiable, Equatable, Sendable {
     }
 
     var cautionBadge: Line? {
+        if id == "dup-folder-partial-coverage" { return Copy.auditBadge }
+        if id.hasPrefix("dup-folder-shared-") { return Copy.auditBadge }
+        if id.hasPrefix("dup-folder-") { return Copy.recommendBadge }
+        if id == "ai-cursor-state-db" { return Copy.auditBadge }
+        if id.hasPrefix("similar-capture-audit-") || id == "similar-capture-partial-coverage" {
+            return Copy.auditBadge
+        }
+        if id.hasPrefix("similar-capture-file-") { return Copy.recommendBadge }
+        if id.hasPrefix("forensic-") { return Copy.auditBadge }
+        if id.contains("-orphan-") { return Copy.auditBadge }
+        if id.hasPrefix("intel-") { return Copy.deepBadge }
+        if id.hasPrefix("hidden-tree-") { return Copy.deepBadge }
+        if kind == .deleteCaptureRemnants { return Copy.hiddenCopyBadge }
+        if id.hasPrefix("system-audit-") { return Copy.auditBadge }
+        if id.hasPrefix("dup-hardlink-") || id.hasPrefix("dup-clone-")
+            || id.hasPrefix("large-shared-") { return Copy.auditBadge }
+        if id.hasPrefix("darwin-cache-") || id.hasPrefix("darwin-temp-") { return Copy.deepBadge }
         if module == .pulse, id == "pulse-ram" || id == "pulse-cpu" { return Copy.drillBadge }
         if module == .pulse, id.hasPrefix("pulse-part:") { return nil }
         if module == .pulse, kind == .closeTab { return Copy.tabCloseBadge }
@@ -146,6 +189,10 @@ enum Keep {
         "Login Data", "Login Data-journal", "Login Data For Account",
         "Web Data", "Web Data-journal",
         "Local Storage", "LocalStorage", "IndexedDB",
+        "Local State", "Session Storage", "Sessions", "WebStorage",
+        "Service Worker",
+        "accounts", "Accounts", "Auth", "Authentication",
+        "key_data", "key_datas", "settingss", "postbox", "tdata", "user_data",
         "Preferences", "Secure Preferences",
         "MediaKeys", "MediaKeysHashSalts", "HSTS",
         "AlternativeServices", "Origins",
@@ -161,11 +208,53 @@ enum Keep {
     static let pathFragments: [String] = [
         "/.colima", "/Parallels/", "/.gradle",
         "/CoreSimulator", "/iOS DeviceSupport",
+        "/Library/Application Support/MobileSync/Backup",
+        "/Library/Group Containers/group.com.apple.screencapture",
+        "/Library/ScreenRecordings",
+        "/Library/Containers/com.apple.QuickTimePlayerX/Data/Library/Autosave Information",
+        "/Library/Application Support/CloudDocs/session",
+        "/Library/HTTPStorages",
         "/Claude/vm_bundles", "Photos Library",
+        "/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+        "/Library/Application Support/Cursor/CachedExtensionVSIXs/.trash",
+        "/.cursor/extensions",
+        "/.claude/projects", "/.claude/sessions",
+        "/.codex/sessions", "/.codex/archived_sessions", "/.codex/sqlite",
+        "/Library/Application Support/com.openai.chat",
+        "/Library/Application Support/Codex",
+        "/Library/Preferences/com.openai.",
+        "/Library/Preferences/com.anthropic.",
+        "/Library/Application Support/Claude/local-agent-mode-sessions",
+        "/Library/Application Support/Claude/claude-code-sessions",
+        "/Library/Application Support/Claude/Session Storage",
+        "/Library/Application Support/Claude/Local Storage",
+        "/Library/Application Support/Claude/IndexedDB",
+        "/Library/Application Support/Claude/WebStorage",
+        "/Library/Application Support/Claude/Partitions",
+        "/Library/Application Support/Telegram Desktop/tdata",
+        "/Library/Application Support/zoom.us/data",
         "/Mobile Documents/com~apple~CloudDocs/Personal",
         "/Mobile Documents/com~apple~CloudDocs/Education",
         "/Mobile Documents/com~apple~CloudDocs/Work",
         "/Mobile Documents/com~apple~CloudDocs/STEM"
+    ]
+
+    /// System-owned roots are visible to the deep audit, but never writable through
+    /// the normal home-folder cleaner. Only SystemDeepScanner's narrow opt-in cards
+    /// can cross this boundary.
+    private static let systemRoots: [URL] = [
+        URL(fileURLWithPath: "/private/tmp"),
+        URL(fileURLWithPath: "/private/var/folders"),
+        URL(fileURLWithPath: "/private/var/log"),
+        URL(fileURLWithPath: "/private/var/vm"),
+        URL(fileURLWithPath: "/private/var/db/diagnostics"),
+        URL(fileURLWithPath: "/private/var/db/powerlog"),
+        URL(fileURLWithPath: "/private/var/db/uuidtext"),
+        URL(fileURLWithPath: "/private/var/root/.Trash"),
+        URL(fileURLWithPath: "/System/Volumes/Data/.DocumentRevisions-V100"),
+        URL(fileURLWithPath: "/System/Volumes/VM"),
+        URL(fileURLWithPath: "/Library/Caches"),
+        URL(fileURLWithPath: "/Library/Logs")
     ]
 
     static var extraPaths: [String] {
@@ -192,6 +281,17 @@ enum Keep {
     static func isProtected(_ url: URL) -> Bool {
         let p = url.standardizedFileURL.path
         if pathFragments.contains(where: { p.contains($0) }) { return true }
+        let canonical = url.standardizedFileURL.resolvingSymlinksInPath().path
+        if systemRoots.contains(where: {
+            let root = $0.standardizedFileURL.resolvingSymlinksInPath().path
+            return canonical == root || canonical.hasPrefix(root + "/")
+        }) { return true }
+        return isExtraProtected(url)
+    }
+
+    /// User exclusions always win, including over narrow built-in opt-in cards.
+    static func isExtraProtected(_ url: URL) -> Bool {
+        let p = url.standardizedFileURL.path
         for extra in extraPaths {
             if p == extra || p.hasPrefix(extra + "/") { return true }
         }
@@ -200,7 +300,49 @@ enum Keep {
 
     /// Opt-in heavy paths that live under Keep fragments but may appear as explicit cards.
     static func allowsExplicitCard(_ item: JunkItem) -> Bool {
-        item.id.hasPrefix("dev-xcode-ios") || item.id.hasPrefix("dev-sim-caches")
+        if DuplicateFolderScanner.isExplicitCard(item) { return true }
+        if StorageIntelligenceScanner.isExplicitCard(item) { return true }
+        if AIStorageScanner.isExplicitCard(item) { return true }
+        if ForensicRemnantScanner.isExplicitCard(item) { return true }
+        if ScreenshotProvenanceScanner.isExplicitCard(item) { return true }
+        if SimilarCaptureScanner.isExplicitCard(item) { return true }
+        if DeepMediaForensicsScanner.isExplicitCard(item) { return true }
+        if HiddenCaptureScanner.isExplicitCard(item) { return true }
+        if HiddenTreeScanner.isExplicitCard(item) { return true }
+        if SystemDeepScanner.isExplicitRuntimeCard(item) { return true }
+        if SystemDeepScanner.isSystemAuditCard(item) { return true }
+        if item.id.hasPrefix("dev-xcode-ios") || item.id.hasPrefix("dev-sim-caches") { return true }
+        if item.id.hasPrefix("ios-backup-") {
+            let root = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/MobileSync/Backup")
+                .standardizedFileURL.path
+            let path = item.url.standardizedFileURL.path
+            return path.hasPrefix(root + "/") && path != root
+        }
+        if item.id.hasPrefix("artifact-local-") {
+            return ArtifactScanner.isAllowedProtectedArtifact(item.url)
+        }
+        if item.id.hasPrefix("tgdesk-cache-") || item.id.hasPrefix("tgdesk-media_cache-") {
+            return isTelegramDesktopCache(item.url)
+        }
+        return false
+    }
+
+    static func isTelegramDesktopCache(_ url: URL) -> Bool {
+        let base = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Telegram Desktop/tdata")
+            .standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        guard path.hasPrefix(base + "/") else { return false }
+        let relative = String(path.dropFirst(base.count + 1))
+        let components = relative.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard components.count == 2,
+              components[1] == "cache" || components[1] == "media_cache" else { return false }
+        let userData = components[0]
+        if userData == "user_data" { return true }
+        guard userData.hasPrefix("user_data#") else { return false }
+        let suffix = userData.dropFirst("user_data#".count)
+        return !suffix.isEmpty && suffix.allSatisfy(\.isNumber)
     }
 
     static func canExclude(_ url: URL) -> Bool {

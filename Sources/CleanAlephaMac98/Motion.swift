@@ -148,12 +148,16 @@ private struct QuietButtonBody: View {
                 label
                     .background(
                         RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                            .fill(
-                                enabled
-                                    ? (careChrome
-                                        ? C.careInk.opacity(configuration.isPressed ? 0.14 : 0.10)
-                                        : (configuration.isPressed ? C.paperHover : C.paper))
-                                    : (careChrome ? C.careInk.opacity(0.06) : C.paper.opacity(0.55))
+                            .fill(.thinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                                    .fill(
+                                        enabled
+                                            ? (careChrome
+                                                ? C.careInk.opacity(configuration.isPressed ? 0.14 : 0.08)
+                                                : C.action.opacity(configuration.isPressed ? 0.14 : 0.07))
+                                            : C.action.opacity(0.03)
+                                    )
                             )
                     )
                     .overlay(
@@ -186,18 +190,39 @@ struct GhostButton: ButtonStyle {
 private struct GhostButtonBody: View {
     let configuration: ButtonStyleConfiguration
     @Environment(\.careChrome) private var careChrome
+    @Environment(\.isEnabled) private var enabled
+    @State private var hover = false
 
     var body: some View {
-        configuration.label
+        let label = configuration.label
             .font(F.callout())
             .foregroundStyle(
                 (careChrome ? C.careSecondary : C.secondary)
-                    .opacity(configuration.isPressed ? 0.7 : 1)
+                    .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.42)
             )
             .frame(minHeight: S.hitMin)
-            .padding(.horizontal, S.xs)
+            .padding(.horizontal, S.sm)
+
+        Group {
+            if #available(macOS 26.0, *) {
+                label.camGlass(
+                    tint: C.action.opacity(hover ? 0.12 : 0.04),
+                    interactive: enabled,
+                    shape: .capsule
+                )
+            } else {
+                label.background(
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .overlay(Capsule().fill(C.action.opacity(hover ? 0.11 : 0.035)))
+                        .overlay(Capsule().stroke(Color.white.opacity(hover ? 0.55 : 0.25), lineWidth: 1))
+                )
+            }
+        }
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(Motion.easePress, value: configuration.isPressed)
+            .animation(Motion.easeHover, value: hover)
+            .onHover { hover = enabled && $0 }
     }
 }
 
@@ -249,20 +274,32 @@ private struct DestructiveQuietBody: View {
 
 struct BackChromeButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        let label = configuration.label
             .font(F.button())
             .foregroundStyle(C.accentText)
             .frame(minHeight: 40)
             .padding(.horizontal, S.md)
-            .background(
-                RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                    .fill(C.paper)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                    .stroke(C.action.opacity(configuration.isPressed ? 0.55 : 0.40), lineWidth: 1.5)
-            )
-            .shadow(color: C.pillShadow, radius: 6, y: 2)
+
+        Group {
+            if #available(macOS 26.0, *) {
+                label.camGlass(tint: C.action.opacity(0.14), interactive: true, shape: .rounded)
+            } else {
+                label
+                    .background(
+                        RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                            .fill(.thinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                                    .fill(C.action.opacity(configuration.isPressed ? 0.16 : 0.08))
+                            )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                            .stroke(C.action.opacity(configuration.isPressed ? 0.55 : 0.34), lineWidth: 1.2)
+                    )
+                    .shadow(color: C.pillShadow, radius: 6, y: 2)
+            }
+        }
             .focusStroke(radius: S.buttonRadius)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(Motion.easePress, value: configuration.isPressed)

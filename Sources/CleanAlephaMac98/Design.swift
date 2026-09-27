@@ -102,7 +102,7 @@ enum C {
     /// Paper glass — night is dark rose glass, not inverted white.
     static let paper = token("paper", light: (1, 1, 1, 0.88), dark: (0.20, 0.13, 0.16, 0.82))
     static let paperHover = token("paperHover", light: (1, 1, 1, 0.96), dark: (0.26, 0.16, 0.20, 0.90))
-    static let pill = token("pill", light: (1, 1, 1, 0.94), dark: (0.28, 0.16, 0.20, 0.92))
+    static let pill = token("pill", light: (1, 1, 1, 0.58), dark: (0.28, 0.16, 0.20, 0.68))
     static let pillHover = token("pillHover", light: (0, 0, 0, 0.06), dark: (0.24, 0.14, 0.18, 0.55))
     static let chip = token("chip", light: (0, 0, 0, 0.06), dark: (1, 0.94, 0.95, 0.08))
     static let glass = token("glass", light: (1, 1, 1, 0.55), dark: (0.30, 0.18, 0.22, 0.50))
@@ -198,23 +198,86 @@ enum Art {
 struct CardBackground: View {
     var selected: Bool = false
     var hover: Bool = false
+    var family: CareFamily = .system
+    var radius: CGFloat = S.cardRadius
+    var prominent: Bool = false
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let increased = contrast == .increased
-        // Solid paper — not Liquid Glass. Glass on every result card kept the GPU busy in idle.
-        RoundedRectangle(cornerRadius: S.cardRadius, style: .continuous)
-            .fill(hover ? C.paperHover : C.paper)
-            .overlay(
-                RoundedRectangle(cornerRadius: S.cardRadius, style: .continuous)
-                    .stroke(
-                        selected
-                            ? C.liquidLo.opacity(increased ? 0.90 : 0.55)
-                            : (increased ? C.ink.opacity(0.28) : C.cardStroke),
-                        lineWidth: selected ? (increased ? 2 : 1.4) : (increased ? 1.5 : 1)
-                    )
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        ZStack {
+            shape.fill(
+                reduceTransparency
+                    ? AnyShapeStyle(hover ? C.paperHover : C.paper)
+                    : AnyShapeStyle(prominent ? .thinMaterial : .ultraThinMaterial)
             )
-            .shadow(color: C.cardShadow.opacity(hover ? 1.4 : 1), radius: hover ? 18 : 10, y: 6)
+
+            shape.fill(
+                LinearGradient(
+                    colors: surfaceColors,
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+
+            // A restrained light-catching rim gives depth without turning every
+            // result into a heavyweight native glass renderer.
+            shape.stroke(
+                LinearGradient(
+                    colors: increased
+                        ? [C.ink.opacity(0.42), C.ink.opacity(0.22)]
+                        : [
+                            Color.white.opacity(scheme == .dark ? 0.34 : 0.86),
+                            family.hi.opacity(selected ? 0.68 : 0.32),
+                            family.lo.opacity(scheme == .dark ? 0.42 : 0.22)
+                        ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: selected ? (increased ? 2.2 : 1.5) : (increased ? 1.5 : 1)
+            )
+
+            shape
+                .inset(by: 1)
+                .stroke(
+                    LinearGradient(
+                        colors: [Color.white.opacity(scheme == .dark ? 0.16 : 0.52), .clear],
+                        startPoint: .top,
+                        endPoint: .center
+                    ),
+                    lineWidth: 1
+                )
+        }
+        .shadow(
+            color: selected
+                ? family.glow.opacity(scheme == .dark ? 0.72 : 0.50)
+                : C.cardShadow.opacity(hover ? 1.35 : 0.90),
+            radius: hover ? 20 : (prominent ? 16 : 11),
+            y: hover ? 8 : 6
+        )
+        .shadow(
+            color: Color.white.opacity(scheme == .dark ? 0 : (hover ? 0.40 : 0.22)),
+            radius: 1,
+            y: -1
+        )
+    }
+
+    private var surfaceColors: [Color] {
+        if scheme == .dark {
+            return [
+                Color.white.opacity(prominent ? 0.15 : (hover ? 0.13 : 0.10)),
+                family.mid.opacity(selected ? 0.25 : (hover ? 0.18 : 0.12)),
+                Color.black.opacity(prominent ? 0.10 : 0.16)
+            ]
+        }
+        return [
+            Color.white.opacity(prominent ? 0.48 : (hover ? 0.36 : 0.24)),
+            family.hi.opacity(selected ? 0.38 : (hover ? 0.30 : 0.22)),
+            family.mid.opacity(prominent ? 0.18 : 0.13)
+        ]
     }
 }
 
@@ -246,7 +309,14 @@ struct MicroBadge: View {
             .foregroundStyle(ink)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(Capsule().fill(fill))
+            .background(
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                    .overlay(Capsule().fill(fill))
+                    .overlay(
+                        Capsule().stroke(Color.white.opacity(0.28), lineWidth: 0.8)
+                    )
+            )
     }
 }
 
@@ -267,7 +337,15 @@ struct BannerInfo: View {
         .padding(S.sm)
         .background(
             RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                .fill(C.action.opacity(0.10))
+                .fill(.thinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                        .fill(C.action.opacity(0.10))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                        .stroke(Color.white.opacity(0.30), lineWidth: 1)
+                )
         )
         .accessibilityElement(children: .combine)
     }
@@ -296,7 +374,15 @@ struct BannerWarn: View {
         .padding(S.sm)
         .background(
             RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                .fill(C.warn.opacity(0.08))
+                .fill(.thinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                        .fill(C.warn.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                        .stroke(C.warn.opacity(0.20), lineWidth: 1)
+                )
         )
         .accessibilityElement(children: .combine)
     }

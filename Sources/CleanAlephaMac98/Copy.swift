@@ -61,7 +61,7 @@ enum Copy {
     static let openLayer = Line(ru: "Открыть", en: "Open")
     static let smartOverview = Line(ru: "По разделам", en: "By section")
     static let stop = Line(ru: "Остановить", en: "Stop")
-    static let safe = Line(ru: "Безопасное", en: "Safe")
+    static let safe = Line(ru: "Отметить безопасное", en: "Select safe items")
     static let deselect = Line(ru: "Снять выбор", en: "Clear selection")
     static let later = Line(ru: "Позже", en: "Later")
     static let close = Line(ru: "Закрыть", en: "Close")
@@ -79,8 +79,8 @@ enum Copy {
     static let loginsBadge = Line(ru: "логины целы", en: "logins stay")
     static let needFDA = Line(ru: "Нужен полный доступ к диску", en: "Needs Full Disk Access")
     static let needFDAQuiet = Line(
-        ru: "Без полного доступа не видно Telegram и Safari",
-        en: "Without Full Disk Access, Telegram and Safari stay hidden"
+        ru: "Без полного доступа не видно скрытые ScreenRecordings, Telegram и Safari",
+        en: "Without Full Disk Access, hidden ScreenRecordings, Telegram, and Safari stay hidden"
     )
     static let dontTouch = Line(ru: "Не трогаем", en: "We don't touch")
     static let emptied = Line(ru: "снято", en: "cleared")
@@ -88,6 +88,14 @@ enum Copy {
     static let historyBadge = Line(ru: "история", en: "history")
     static let leftoverBadge = Line(ru: "остаток", en: "leftover")
     static let rebuildBadge = Line(ru: "скачается снова", en: "will re-download")
+    static let deepBadge = Line(ru: "глубокая очистка", en: "deep clean")
+    static let auditBadge = Line(ru: "только анализ", en: "read-only")
+    static let hiddenCopyBadge = Line(ru: "скрытая копия", en: "hidden copy")
+    static let details = Line(ru: "Подробнее", en: "Details")
+    static let hideDetails = Line(ru: "Скрыть пояснение", en: "Hide details")
+    static let whatIsThis = Line(ru: "Что это", en: "What this is")
+    static let whatChanges = Line(ru: "Что изменится", en: "What changes")
+    static let exactLocation = Line(ru: "Где лежит", en: "Location")
     static let counting = Line(ru: "считаем…", en: "counting…")
     static let foundLabel = Line(ru: "найдено", en: "found")
 
@@ -98,15 +106,15 @@ enum Copy {
     static let layerUnscanned = Line(ru: "Этот слой ещё не сканировали.", en: "Haven't scanned this yet.")
     static let foldersClean = Line(ru: "В открытых папках чисто.", en: "Those folders are clean.")
     static let foldersCleanFDA = Line(
-        ru: "В открытых папках чисто. Telegram и Safari без полного доступа не видны.",
-        en: "Those folders are clean. Telegram and Safari need Full Disk Access."
+        ru: "В открытых папках чисто. Скрытые ScreenRecordings, Telegram и Safari без полного доступа не видны.",
+        en: "Those folders are clean. Hidden ScreenRecordings, Telegram, and Safari need Full Disk Access."
     )
     static let layerClean = Line(ru: "В этом слое чисто", en: "This layer is clean")
     static let done = Line(ru: "Готово", en: "Done")
     static let emptySmart = Line(ru: "Кэша и мусора в открытых папках нет.", en: "No cache or junk in the open folders.")
     static let emptyFDA = Line(
-        ru: "Telegram и Safari без полного доступа не видны.",
-        en: "Telegram and Safari need Full Disk Access."
+        ru: "Скрытые ScreenRecordings, Telegram и Safari без полного доступа не видны.",
+        en: "Hidden ScreenRecordings, Telegram, and Safari need Full Disk Access."
     )
 
     static let diskTitle = Line(ru: "Обзор диска", en: "Disk")
@@ -205,7 +213,10 @@ enum Copy {
     )
     static let noon = Line(ru: "12:00", en: "12:00")
     static let eightPm = Line(ru: "20:00", en: "20:00")
-    static let fdaHint = Line(ru: "кэш и логи, не корзина, история и крупные файлы", en: "caches and logs, not Trash, history, or large files")
+    static let fdaHint = Line(
+        ru: "отметить кэш, логи, незавершённые загрузки и старые файлы TemporaryItems",
+        en: "select caches, logs, incomplete downloads, and old TemporaryItems files"
+    )
     static let deselectHint = Line(ru: "снять галки с видимых карточек", en: "clear checks on visible cards")
     static let leftoverGone = Line(ru: "В /Applications не найдено", en: "Not in /Applications")
     static let fdaOpenFail = Line(ru: "Настройки доступа не открылись.", en: "Couldn't open access settings.")
@@ -279,6 +290,10 @@ enum Copy {
     static let appsTitle = Line(ru: "Кто держит память", en: "What's holding RAM")
     static let pulseIdle = Line(ru: "Нажми «Сканировать».", en: "Press Scan.")
     static let pulseReady = Line(ru: "Готово", en: "Ready")
+    static let pulseOverviewNote = Line(
+        ru: "Это обзор памяти и CPU — здесь ничего не удаляется.",
+        en: "This is a RAM and CPU overview — nothing is deleted here."
+    )
     static let ramHonest = Line(ru: "Готово", en: "Ready")
     static let appRamHint = Line(ru: "", en: "")
     static let tabRamHint = Line(
@@ -612,6 +627,20 @@ enum Copy {
         )
     }
 
+    static func closeAppsFirst(_ apps: [String], freed: Int64, failed: Int) -> Line {
+        let names = apps.joined(separator: ", ")
+        if freed > 0 {
+            return Line(
+                ru: "Снято \(ByteFormat.string(freed, .ru)). Закрой \(names) и повтори для оставшихся \(failed) шт. — так аккаунты останутся на месте.",
+                en: "Cleared \(ByteFormat.string(freed, .en)). Quit \(names) and retry the remaining \(failed) — this keeps accounts signed in."
+            )
+        }
+        return Line(
+            ru: "Закрой \(names) и повтори очистку — активные сессии не трогаем.",
+            en: "Quit \(names) and retry — active sessions are left untouched."
+        )
+    }
+
     static func partialRead(_ n: Int) -> Line {
         Line(ru: "Часть папок не прочиталась (\(n)).", en: "Some folders couldn't be read (\(n)).")
     }
@@ -638,6 +667,13 @@ enum Copy {
 
     static func orbCanClean(_ bytes: Int64) -> Line {
         Line(ru: "Сфера, можно очистить \(ByteFormat.string(bytes, .ru))", en: "Flask, can clean \(ByteFormat.string(bytes, .en))")
+    }
+
+    static func orbMemoryUsed(_ bytes: Int64) -> Line {
+        Line(
+            ru: "Сфера, используется \(ByteFormat.string(bytes, .ru)) памяти",
+            en: "Flask, \(ByteFormat.string(bytes, .en)) of memory in use"
+        )
     }
 
     static func diskA11y(used: Int64, reserved: Int64, free: Int64) -> Line {

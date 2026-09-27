@@ -62,6 +62,60 @@ struct CleanAlephaMac98App: App {
         if CommandLine.arguments.contains("--qa-keep") {
             QAHarness.keep()
         }
+        if CommandLine.arguments.contains("--qa-artifacts") {
+            QAHarness.artifacts()
+        }
+        if CommandLine.arguments.contains("--qa-artifact-scan") {
+            QAHarness.artifactScan()
+        }
+        if CommandLine.arguments.contains("--qa-junk") {
+            QAHarness.junk()
+        }
+        if CommandLine.arguments.contains("--qa-system-deep") {
+            QAHarness.systemDeep()
+        }
+        if CommandLine.arguments.contains("--qa-hidden-captures") {
+            QAHarness.hiddenCaptures()
+        }
+        if CommandLine.arguments.contains("--qa-forensic-remnants") {
+            QAHarness.forensicRemnants()
+        }
+        if CommandLine.arguments.contains("--qa-screenshot-provenance") {
+            QAHarness.screenshotProvenance()
+        }
+        if CommandLine.arguments.contains("--qa-similar-captures") {
+            QAHarness.similarCaptures()
+        }
+        if CommandLine.arguments.contains("--qa-duplicate-folders") {
+            QAHarness.duplicateFolders()
+        }
+        if CommandLine.arguments.contains("--qa-duplicate-folders-real") {
+            QAHarness.duplicateFoldersReal()
+        }
+        if CommandLine.arguments.contains("--qa-trash-forensics") {
+            QAHarness.trashForensics()
+        }
+        if CommandLine.arguments.contains("--qa-deep-media-forensics") {
+            QAHarness.deepMediaForensics()
+        }
+        if CommandLine.arguments.contains("--qa-ai-storage") {
+            QAHarness.aiStorage()
+        }
+        if CommandLine.arguments.contains("--qa-storage-intelligence") {
+            QAHarness.storageIntelligence()
+        }
+        if CommandLine.arguments.contains("--qa-storage-accounting") {
+            QAHarness.storageAccounting()
+        }
+        if CommandLine.arguments.contains("--qa-storage-intelligence-scan") {
+            QAHarness.storageIntelligenceScan()
+        }
+        if CommandLine.arguments.contains("--qa-hidden-trees") {
+            QAHarness.hiddenTrees()
+        }
+        if CommandLine.arguments.contains("--qa-cancellation") {
+            QAHarness.cancellation()
+        }
         if CommandLine.arguments.contains("--qa-smart") {
             QAHarness.smart()
         }

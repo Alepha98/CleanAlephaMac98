@@ -6,8 +6,32 @@ enum CamProcess {
     static func run(
         path: String,
         arguments: [String],
-        timeout: TimeInterval = 8
+        timeout: TimeInterval = 8,
+        cancellation: ScanCancellation? = nil
     ) -> (out: String, err: String, status: Int32, timedOut: Bool) {
+        let result = runData(
+            path: path,
+            arguments: arguments,
+            timeout: timeout,
+            cancellation: cancellation
+        )
+        return (
+            String(decoding: result.out, as: UTF8.self),
+            String(decoding: result.err, as: UTF8.self),
+            result.status,
+            result.timedOut
+        )
+    }
+
+    /// Binary-safe variant for NUL-delimited filesystem output. File names are arbitrary
+    /// bytes, so converting the whole stream to UTF-8 before splitting could erase every
+    /// result because of a single unusual name.
+    static func runData(
+        path: String,
+        arguments: [String],
+        timeout: TimeInterval = 8,
+        cancellation: ScanCancellation? = nil
+    ) -> (out: Data, err: Data, status: Int32, timedOut: Bool) {
         let task = Process()
         let outPipe = Pipe()
         let errPipe = Pipe()
@@ -18,7 +42,7 @@ enum CamProcess {
         do {
             try task.run()
         } catch {
-            return ("", "\(error)", -1, false)
+            return (Data(), Data("\(error)".utf8), -1, false)
         }
 
         let outSink = DataSink()
@@ -36,12 +60,12 @@ enum CamProcess {
         }
 
         let deadline = Date().addingTimeInterval(timeout)
-        while task.isRunning, Date() < deadline {
+        while task.isRunning, Date() < deadline, cancellation?.isCancelled != true {
             Thread.sleep(forTimeInterval: 0.03)
         }
         var timedOut = false
         if task.isRunning {
-            timedOut = true
+            timedOut = Date() >= deadline
             task.terminate()
             Thread.sleep(forTimeInterval: 0.12)
             if task.isRunning {
@@ -50,8 +74,8 @@ enum CamProcess {
         }
         _ = group.wait(timeout: .now() + 2)
         return (
-            String(data: outSink.data, encoding: .utf8) ?? "",
-            String(data: errSink.data, encoding: .utf8) ?? "",
+            outSink.data,
+            errSink.data,
             task.terminationStatus,
             timedOut
         )

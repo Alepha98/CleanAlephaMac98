@@ -1,6 +1,26 @@
 import Darwin
 import Foundation
 
+/// Thread-safe cancellation shared with synchronous scanners. Swift task cancellation
+/// cannot by itself interrupt a `find`, SQLite walk, or FileManager enumerator running
+/// behind a continuation, so those workers poll this small token explicitly.
+final class ScanCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+}
+
 /// Soft caps for scans: prefer a slower pass over melting the Mac (CMM often hits ~100% CPU / 1GB+).
 enum ScanThrottle {
     static let paceNanos: UInt64 = 12_000_000

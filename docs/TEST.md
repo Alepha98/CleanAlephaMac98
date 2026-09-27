@@ -1,6 +1,6 @@
 # CleanAlephaMac98 – тестовая документация
 
-Версия приложения, под которую писалось: **1.1.5**.  
+Версия приложения, под которую писалось: **1.0.7**.
 Лог: `~/Library/Logs/CleanAlephaMac98.log`  
 Язык интерфейса смотри в `defaults read com.alepha98.CleanAlephaMac98 cam98.language` (`system` / `ru` / `en`).  
 Последний открытый раздел: `cam98.module`.
@@ -64,6 +64,7 @@ tail -f ~/Library/Logs/CleanAlephaMac98.log
 | --- | --- | --- |
 | U1 | Сканировать на холодную | Сфера падает и растёт, статус по слоям, лог `scan start smart` |
 | U2 | Стоп на середине | Частичные карточки или «остановлено», кнопки живые |
+| U2a | Сразу повторить после Stop | Предыдущий фоновый обход погас, второй скан не накладывается; `junk cancelled` появляется за секунды |
 | U3 | Повторный скан | Старые карточки этого прогона сбрасываются, не копятся дубли |
 | U4 | Безопасное | Галка на кэшах, снята с корзины / истории / large / leftovers |
 | U5 | Снять выбор | Все видимые галки сняты, Очистить неактивна |
@@ -85,7 +86,7 @@ tail -f ~/Library/Logs/CleanAlephaMac98.log
 
 1. Зайти в слой без скана – сфера + «Сканировать», не чужие карточки.
 2. Сканировать – только карточки этого слоя.
-3. Карточка 0 Б не показывается.
+3. Карточка 0 Б не показывается, кроме явного read-only аудита, где macOS скрыла размер, hard link или APFS clone гарантированно не освобождает отдельные блоки.
 4. Правый клик → Показать в Finder (реальный путь).
 5. Правый клик → Не трогать эту папку – исчезает из следующих сканов, появляется в Обслуживании.
 6. Очистить одну карточку – остальные целы.
@@ -96,16 +97,26 @@ tail -f ~/Library/Logs/CleanAlephaMac98.log
 
 | ID | Слой | Дополнительно |
 | --- | --- | --- |
-| J1 | Мусор | `~/Library/Logs`, Saved Application State. Не `/var/log`. |
+| J1 | Мусор | `~/Library/Logs`, Saved Application State, старые безопасные объекты из Darwin cache/temp. Отдельно видны полноразмерные остатки Screenshot/Screen Recording из Darwin temp, `group.com.apple.screencapture/ScreenRecordings`, legacy `~/Library/ScreenRecordings` и QuickTime Autosave. `/Library/Logs`, `/var/log`, VM и диагностика — только «анализ». Отдельная карточка macOS-reserve/APFS никогда не входит в очищаемую сумму. |
+| J1a | Скрытые скриншоты | Карточка считает image/movie с именем Screenshot/Screen Recording или системным xattr `kMDItemIsScreenCapture`; отдельная карточка принимает числовой файл без расширения только при media magic + quarantine-origin Telegram; обычный `random.png` не попадает |
+| J1aa | Копии Claude/Cursor | Старые screenshots из Claude uploads/pending-uploads и Cursor workspace/images/project assets видны отдельно, выключены по умолчанию; при открытом владельце чистка блокируется |
+| J1ab | Системные Container TemporaryItems | `~/Library/Containers/*/Data/tmp/TemporaryItems` и `Group Containers/*/TemporaryItems` обнаруживаются без каталога приложений; медиа старше 7 дней считаются физически, полные exact-дубли подтверждаются SHA-256; карточка входит в Safe, но блокируется при открытом владельце |
+| J1ac | Глубокий `/private/tmp` | Только деревья UID текущего пользователя; для Claude предлагается старая UUID-сессия, не общий `claude-UID`; внутренний symlink допустим, внешний/сокет/чужой UID блокируют удаление |
+| J1b | Активная запись | Свежая запись и файл, открытый Screenshot/QuickTime/другим процессом, не удаляются; карточка всегда выключена по умолчанию |
+| J1c | Cursor AI storage | `state.vscdb` показывается только как аудит и не удаляется; чистятся только `.trash` и каталоги из `.cursor/extensions/.obsolete`; при открытом Cursor операция блокируется |
+| J1d | Контентный глубокий индекс | Неизвестные заранее `Cache`/`tmp`/`logs` находятся рекурсивно и чистятся только интерактивно; `Session Storage`, Cookies, auth и symlink делают карточку неудаляемой; старые uploads/outputs и точные скрытые медиакопии показываются только как аудит; после общего лимита каждая оставшаяся ветка получает отдельную квоту, поэтому один огромный каталог не скрывает остальные |
 | M1 | Почта | Только загрузки/кэш, не `~/Library/Mail` целиком. |
 | T1 | Корзина | По умолчанию выкл. Очистить корзину – отдельный тон кнопки. Файл из корзины после очистки не восстанавливается. |
 | O1 | Остатки | Только приложения, которых нет в `/Applications` и `~/Applications`. Не трогать живой Chrome. |
-| B1 | Большие | По умолчанию выкл. Порог ~80 МБ. Не заходить в `.git`, `node_modules`, `.colima`. |
+| B1 | Большие | По умолчанию выкл. Порог ~50 МБ. Не заходить в `.git`, `node_modules`, `.colima`. Показывать физический объём; dataless cloud placeholder не открывать, hard link/APFS clone — read-only. |
+| B2 | Дубликаты | Размер → три сэмпла → полный SHA-256. Обычная копия получает физический объём; hard link и APFS clone — read-only/0 Б и не входят в «можно очистить». |
 | R1 | Браузеры | Есть диск-кэш. **Нет** Cookies, Login Data, Web Data. После очистки сайт не разлогинивает. |
 | R2 | Chrome Default + Profile 1 | Отдельные карточки, логины целы. |
 | R3 | Safari сеть | WebsiteDataStore, не контейнер сессий. |
 | D1 | Dev | npm/SwiftPM/DerivedData. **Нет** `.gradle`, CoreSimulator, DeviceSupport. |
 | G1 | Telegram | Медиа вкл, история выкл. Аккаунт находится сам, не хардкод. |
+| G1a | Telegram Desktop открыт | Очистка `tdata`-кэша отложена: подсказка закрыть Telegram, аккаунты/`key_data(s)`/настройки целы |
+| G1b | Telegram Desktop закрыт | Динамически находятся `tdata/user_data`, `user_data#2` и другие числовые профили; чистятся только их `cache`/`media_cache`, но не сами `user_data*`, ключи или настройки |
 | G2 | Сообщения | Без FDA почти пусто. С FDA – вложения, по умолчанию выкл. |
 
 Невозможное / запретное:
@@ -132,6 +143,7 @@ tail -f ~/Library/Logs/CleanAlephaMac98.log
 | P8 | Рестарт на pulse | Снова сфера, **не** автозавис | процесс не unresponsive |
 | P9 | Цифра в шапке | Занятая RAM, не сумма RSS всех хелперов | used ≈ Activity Monitor |
 | P10 | Сайдбар | После скана размер ≈ занятая RAM | не 0 и не мусорный двойной счёт |
+| P11 | Подпись результата | «Используется памяти» + пояснение, что это обзор и ничего не удаляется | нет «можно очистить 24 ГБ» и «0 из N выбрано» |
 
 Негатив: 200 вкладок Chrome; Safari из Cryptex (`/System/Volumes/Preboot/...`); только Helper-процессы; своп > 1 ГБ – статус «Уже своп».
 
@@ -201,6 +213,8 @@ tail -f ~/Library/Logs/CleanAlephaMac98.log
 | X5 | Править `/etc/hosts` | Файл не меняется |
 | X6 | Телеметрия | Сниффер: нет своих HTTP на сторонние хосты при скане |
 | X7 | Телеметрия автоочистки | Агент только локальный, stdout в лог |
+| X8 | Глубокий системный слой | Удаляемая карточка — только непосредственный старый потомок C/T текущего пользователя; `/Library`, `/var/log`, VM, diagnostics и APFS — read-only |
+| X9 | Путь изменился после скана | Если объект стал свежим, получил symlink/socket или открыт процессом, Janitor отказывает перед удалением |
 
 ---
 
@@ -263,11 +277,29 @@ tail -f ~/Library/Logs/CleanAlephaMac98.log
 | `--qa-protect` | Adware / agents / hosts | `qa-protect ok`, наш агент не selected |
 | `--qa-startup` | LaunchAgents + login items | `qa-startup ok`, наш агент `kind-advice=true` |
 | `--qa-keep` | Каталог «не трогаем» | `qa-keep ok`, пути Colima/Photos и т.д. |
-| `--qa-smart` | Все слои Scanner, ловит утечки Keep и Login Data | `leaks=0`, нет `qa smart LOGIN` |
+| `--qa-artifacts` | Классификатор старых outputs + границы Telegram | `qa-artifacts ok`, `tdata/user_data` закрыт, разрешены только `cache` / `media_cache` |
+| `--qa-system-deep` | Границы `/private/var/folders` и `/private/tmp`, UID, возраст, contained/external symlink, mount points, активность, powerlog/sleepimage/swap и read-only системные пути | `qa-system-deep ok`, mount point и системная VM не становятся delete-card, ни одна глубокая карточка не выбрана по умолчанию |
+| `--qa-hidden-captures` | Полноразмерные screenshots/recordings, все принадлежащие UID Darwin hash-корни, `NSIRD_screencaptureui_*`, extensionless Telegram media, container `TemporaryItems`, Claude/Cursor copies, точные полные дубли, подмена пути и открытый файл | `qa-hidden-captures ok`, ordinary PNG не принят; только старые container TemporaryItems входят в Safe, остальные скрытые копии opt-in |
+| `--qa-forensic-remnants` | Глобальные metadata-снимки, Pixelmator recovery-слои, все индексированные скрытые медиа, read-only Finder-аудит NSIRD и закрытые DocumentRevisions/root Trash/Quick Look/ScreenCapture/QuickTime зоны | `qa-forensic-remnants ok`, recovery/версии/Finder не авторизуют удаление, закрытые зоны явно `denied`, все карточки audit-only |
+| `--qa-screenshot-provenance` | Сопоставление скрытых screenshot-эталонов с Telegram `postbox/media`, Desktop cache и Telegram-owned Darwin temp без имён/расширений | `qa-screenshot-provenance ok`; отдельно считаются SHA-256 exact и строгие pixel-fingerprint recompressed matches; карточки audit-only, `postbox/db`/`tdata` не читаются |
+| `--qa-similar-captures` | PNG→JPEG/rename fixture, ложное изображение того же размера и инвалидация локального fingerprint-кеша | `qa-similar-captures ok`; пережатая копия найдена, другое изображение отвергнуто, изменённый файл не использует старый отпечаток |
+| `--qa-duplicate-folders` | Полные и скрытые деревья A/B, та же форма с другим содержимым, symlink, PostgreSQL markers, изменение после скана и очередь с малым лимитом | `qa-duplicate-folders ok`; скрытый дубль найден, DB/symlink/ложное совпадение отвергнуты, изменение блокирует Janitor, очередь продолжает маленькую папку после оборванной большой |
+| `--qa-duplicate-folders-real` | Один реальный возобновляемый проход whole-folder очереди | `qa-duplicate-folders-real ok`; курсор сдвигается, все карточки manual/read-only, нет пустых объяснений или DB-store результатов |
+| `--qa-trash-forensics` | Обычная и скрытая iCloud-корзина, включая отказ TCC | `qa-trash-forensics ok`; закрытая корзина остаётся видимой как advice, непустая iCloud `.Trash` не пропускается |
+| `--qa-deep-media-forensics` | Все доступные скрытые файлы >64 KiB проверяются по бинарным сигнатурам, включая файлы без расширений и Spotlight | `qa-deep-media-forensics ok`; карточки только audit-only и содержат фактические owner-пути |
+| `--qa-ai-storage` | Cursor DB/удалённые chat rows/контентный граф Agent blobs/obsolete extensions/Agent versions, orphan rollouts Codex, Claude containers, runtime staging и OpenCode logs | `qa-ai-storage ok`, недостижимые blob-блоки вычисляются без записи, базы read-only, владельцы защищены |
+| `--qa-storage-intelligence` | Контентный классификатор, сигнатуры, symlink/session границы, роли скрытых build-папок и audit-only карточка неполного покрытия | `qa-storage-intelligence ok` |
+| `--qa-hidden-trees` | Слепая инвентаризация внешних `.*`-деревьев в home/рабочих каталогах | `qa-hidden-trees ok`, неизвестные/VM/DB только audit, build-кэши opt-in и повторно проверены |
+| `--qa-smart --qa-smart-stage=<layer>` | Один реальный слой Scanner; `qa-run.sh` проходит все слои отдельно и проверяет Keep/Login Data, пустые RU/EN-тексты и соответствие статуса реальной безопасности | `leaks=0`, нет `LOGIN`, `EMPTY-GUIDE`, `EMPTY-TITLE` и `WRONG-GUIDE` |
 | `--module pulse --auto-scan` | UI: открыть Память и сразу сканировать | в логе `scanLive pulse ram items≥1` за < 8 с |
 | `--auto` | Фоновая автоочистка | только кэши, `auto done` |
 
 Скрипты:
+
+- `scripts/privileged-readonly-audit.sh UID HOME DARWIN_USER_DIR` — root + Full Disk Access, только чтение закрытых версий/TemporaryItems/Trashes и media magic.
+- `scripts/privileged-hidden-volume-audit.sh` — размеры внешних скрытых Data-деревьев и media magic только для локально выделенных блоков; CloudDocs/FileProvider и zero-block placeholders не открываются.
+- `scripts/privileged-system-media-audit.sh` — root read-only проход по всем пользовательским Darwin-токенам и системно-управляемым медиа Data-тома; обычные пользовательские папки и Telegram исключены, отдельно перечисляются все `TemporaryItems`/deleted-file stores и APFS snapshots.
+- `scripts/privileged-root-trash-audit.sh` — состав, размеры и типы файлов скрытой `/private/var/root/.Trash`, без удаления.
 
 ```bash
 zsh scripts/qa-probe.sh

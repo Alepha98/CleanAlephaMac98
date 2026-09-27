@@ -147,7 +147,7 @@ private struct ShortcutsSheet: View {
         }
         .padding(S.xxl)
         .frame(width: 420)
-        .background(C.bgTop)
+        .background(ShellAtmosphere(richCare: false, family: .system))
         .preferredColorScheme(state.appearance.colorScheme)
     }
 }
@@ -302,10 +302,7 @@ private struct SidebarThemeBar: View {
     }
 
     private var barFill: Color {
-        if scheme == .dark {
-            return Color.white.opacity(0.10)
-        }
-        return Color.white.opacity(0.94)
+        scheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.28)
     }
 
     var body: some View {
@@ -348,10 +345,25 @@ private struct SidebarThemeBar: View {
                 .padding(3)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(barFill)
+                        .fill(.ultraThinMaterial)
                         .overlay(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(C.hairline.opacity(scheme == .dark ? 0.45 : 0.75), lineWidth: 1)
+                                .fill(barFill)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(
+                                    LinearGradient(
+                                        colors: [
+                                            Color.white.opacity(scheme == .dark ? 0.28 : 0.78),
+                                            C.action.opacity(0.20),
+                                            C.hairline.opacity(0.36)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                    lineWidth: 1
+                                )
                         )
                 )
             }
@@ -414,7 +426,15 @@ private struct FdaSidebarCard: View {
             .padding(S.sm)
             .background(
                 RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                    .fill(C.warn.opacity(hover ? 0.14 : 0.08))
+                    .fill(.thinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                            .fill(C.warn.opacity(hover ? 0.14 : 0.07))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                            .stroke(C.warn.opacity(hover ? 0.34 : 0.20), lineWidth: 1)
+                    )
             )
             .focusStroke(radius: S.buttonRadius)
         }
@@ -453,22 +473,6 @@ private struct SidebarRow: View {
     }
 
     private var hintInk: Color { careChrome ? C.careMuted : C.secondary }
-    private var iconInk: Color {
-        if careChrome { return selected ? C.careInk : C.careSecondary }
-        return selected ? C.accentText : C.secondary
-    }
-
-    /// Light Smart Care: dark translucent chips; night: white frost.
-    private var chipFill: Color {
-        if !careChrome {
-            return selected ? C.action.opacity(0.18) : C.iconWell.opacity(hover ? 1.15 : 1)
-        }
-        if scheme == .light {
-            return selected ? C.careInk.opacity(0.12) : C.careInk.opacity(hover ? 0.08 : 0.05)
-        }
-        return selected ? Color.white.opacity(0.22) : Color.white.opacity(hover ? 0.14 : 0.08)
-    }
-
     private var rowFill: Color {
         if !careChrome {
             return selected ? C.pill : (hover ? C.pillHover : Color.clear)
@@ -482,13 +486,14 @@ private struct SidebarRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: S.iconSquircle, style: .continuous)
-                        .fill(chipFill)
-                    CamIcon(glyph: Glyph(module: module), size: 15)
-                        .foregroundStyle(iconInk)
-                }
-                .frame(width: 26, height: 26)
+                GlassIconWell(
+                    glyph: Glyph(module: module),
+                    family: CareFamily.of(module),
+                    selected: selected,
+                    muted: !enabled,
+                    size: 26,
+                    glyphSize: 15
+                )
                 Text(module.name.t(lang))
                     .font(F.body())
                     .foregroundStyle(labelInk)

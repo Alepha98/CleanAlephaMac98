@@ -7,9 +7,11 @@ struct CleanOutcome: Sendable {
     var failed: Bool
     /// Bytes still on disk after a partial or refused clean; 0 if the item is gone.
     var leftover: Int64
+    /// An owning app was open, so cleanup was intentionally refused to preserve its session.
+    var blockedApp: String? = nil
 
-    static func refused(leftover: Int64 = 0) -> CleanOutcome {
-        CleanOutcome(freed: 0, failed: true, leftover: leftover)
+    static func refused(leftover: Int64 = 0, blockedApp: String? = nil) -> CleanOutcome {
+        CleanOutcome(freed: 0, failed: true, leftover: leftover, blockedApp: blockedApp)
     }
 
     static func alreadyGone(counted bytes: Int64) -> CleanOutcome {
@@ -23,21 +25,40 @@ enum Janitor {
         if item.kind == .closeTab {
             return closeTab(item)
         }
+        switch item.kind {
+        case .deleteItem, .deleteCaptureRemnants, .wipeChildren, .safariNetworkCache:
+            guard isSafeUserTarget(item) else {
+                return .refused(leftover: remainingBytes(for: item))
+            }
+        default:
+            break
+        }
+        if Keep.isExtraProtected(item.url) {
+            return .refused(leftover: remainingBytes(for: item))
+        }
         if Keep.isProtected(item.url), !Keep.allowsExplicitCard(item) {
-            return .refused(leftover: max(item.bytes, DiskSizer.bytes(at: item.url)))
+            return .refused(leftover: remainingBytes(for: item))
         }
         if Keep.names.contains(item.url.lastPathComponent) {
-            return .refused(leftover: max(item.bytes, DiskSizer.bytes(at: item.url)))
+            return .refused(leftover: remainingBytes(for: item))
+        }
+        if let app = SessionGuard.blockingOwner(for: item) {
+            return .refused(
+                leftover: remainingBytes(for: item),
+                blockedApp: app
+            )
         }
         switch item.kind {
         case .emptyTrash:
             return emptyTrash(item.url)
         case .deleteItem:
             return deleteItem(item)
+        case .deleteCaptureRemnants:
+            return deleteCaptureRemnants(item)
         case .safariNetworkCache:
             return safariCaches(item.url)
         case .wipeChildren:
-            return wipeChildren(item.url)
+            return wipeChildren(item)
         case .advice:
             return .alreadyGone(counted: 0)
         case .closeTab:
@@ -47,6 +68,61 @@ enum Janitor {
         case .removeLoginItem:
             return removeLoginItem(item)
         }
+    }
+
+    /// Normal direct jobs stay under home. A deep runtime card may cross that boundary
+    /// only after SystemDeepScanner re-validates its exact root, age, and contents.
+    private static func isSafeUserTarget(_ item: JunkItem) -> Bool {
+        if DuplicateFolderScanner.isExplicitCard(item) {
+            return DuplicateFolderScanner.isSafeDeletionCandidate(item)
+        }
+        if StorageIntelligenceScanner.isExplicitCard(item) {
+            return StorageIntelligenceScanner.isSafeDeletionCandidate(item)
+        }
+        if HiddenTreeScanner.isExplicitCard(item) {
+            return HiddenTreeScanner.isSafeDeletionCandidate(item)
+        }
+        if AIStorageScanner.isExplicitCard(item) {
+            return AIStorageScanner.isSafeDeletionCandidate(item)
+        }
+        if HiddenCaptureScanner.isExplicitCard(item) {
+            return HiddenCaptureScanner.isSafeDeletionCandidate(item)
+        }
+        if SystemDeepScanner.isExplicitRuntimeCard(item) {
+            return SystemDeepScanner.isSafeDeletionCandidate(item)
+        }
+        let url = item.url
+        let path = url.standardizedFileURL.path
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        guard path != home, path.hasPrefix(home + "/") else { return false }
+        let broadRoots = ["Library", "Documents", "Desktop", "Downloads", "Pictures", "Movies"]
+            .map { home + "/" + $0 }
+        guard !broadRoots.contains(path), path != home + "/Library/Application Support" else {
+            return false
+        }
+        return true
+    }
+
+    private static func remainingBytes(for item: JunkItem) -> Int64 {
+        if item.kind == .deleteCaptureRemnants {
+            return max(item.bytes, HiddenCaptureScanner.currentBytes(for: item))
+        }
+        if Keep.allowsExplicitCard(item) {
+            return max(item.bytes, DiskSizer.duSK(item.url, timeout: 8) ?? 0)
+        }
+        return max(item.bytes, DiskSizer.bytes(at: item.url))
+    }
+
+    private static func deleteCaptureRemnants(_ item: JunkItem) -> CleanOutcome {
+        let result = HiddenCaptureScanner.removeEligibleRemnants(for: item)
+        if result.before == 0 {
+            return .alreadyGone(counted: 0)
+        }
+        return CleanOutcome(
+            freed: max(0, result.before - result.after),
+            failed: result.failed || result.after > 16_384,
+            leftover: result.after
+        )
     }
 
     private static func closeTab(_ item: JunkItem) -> CleanOutcome {
@@ -65,10 +141,10 @@ enum Janitor {
         do {
             try fm.removeItem(at: item.url)
         } catch {
-            return .refused(leftover: DiskSizer.bytes(at: item.url))
+            return .refused(leftover: remainingBytes(for: item))
         }
         if fm.fileExists(atPath: item.url.path) {
-            return .refused(leftover: DiskSizer.bytes(at: item.url))
+            return .refused(leftover: remainingBytes(for: item))
         }
         return CleanOutcome(freed: item.bytes, failed: false, leftover: 0)
     }
@@ -124,12 +200,17 @@ enum Janitor {
         return CleanOutcome(freed: freed, failed: anyFail && after > 16_384, leftover: after)
     }
 
-    private static func wipeChildren(_ url: URL) -> CleanOutcome {
-        if Keep.names.contains(url.lastPathComponent) || Keep.isProtected(url) {
+    private static func wipeChildren(_ item: JunkItem) -> CleanOutcome {
+        let url = item.url
+        if Keep.names.contains(url.lastPathComponent)
+            || (Keep.isProtected(url) && !Keep.allowsExplicitCard(item)) {
             return .refused(leftover: DiskSizer.bytes(at: url))
         }
         let fm = FileManager.default
-        let before = DiskSizer.bytes(at: url)
+        let explicitProtected = Keep.allowsExplicitCard(item) && Keep.isProtected(url)
+        let before = explicitProtected
+            ? (DiskSizer.duSK(url, timeout: 8) ?? item.bytes)
+            : DiskSizer.bytes(at: url)
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else {
             return .alreadyGone(counted: before)
@@ -146,11 +227,15 @@ enum Janitor {
             return .refused(leftover: before)
         }
         var anyFail = false
+        let allowsBuiltInProtection = Keep.allowsExplicitCard(item)
         for k in kids {
-            if Keep.names.contains(k.lastPathComponent) || Keep.isProtected(k) { continue }
+            if Keep.names.contains(k.lastPathComponent) || Keep.isExtraProtected(k) { continue }
+            if Keep.isProtected(k), !allowsBuiltInProtection { continue }
             do { try fm.removeItem(at: k) } catch { anyFail = true }
         }
-        let after = DiskSizer.bytes(at: url)
+        let after = explicitProtected
+            ? (DiskSizer.duSK(url, timeout: 8) ?? before)
+            : DiskSizer.bytes(at: url)
         let freed = max(0, before - after)
         return CleanOutcome(freed: freed, failed: anyFail && after > 16_384, leftover: after)
     }
