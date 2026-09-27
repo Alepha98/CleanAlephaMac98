@@ -14,10 +14,17 @@ enum ProjectArtifactFinder {
         var walkCap: Int = 200_000
     }
 
+    /// Which artifacts to report. Build output (rebuilds itself, on by default) is cheap to size and
+    /// rides along with Smart; dependency folders (node_modules / .venv / Pods — off by default, the
+    /// heaviest trees to size) are only walked when the Developer layer is opened.
+    enum Scope: Sendable { case all, outputs, dependencies }
+
     private struct Kind: Sendable {
         let sub: Line
         let onByDefault: Bool
         let needsMarker: Bool
+        /// Needs an explicit reinstall (npm/pip/pod install) — the off-by-default half.
+        var isDependency: Bool { !onByDefault }
     }
 
     private static let catalog: [String: Kind] = {
@@ -51,48 +58,98 @@ enum ProjectArtifactFinder {
         "pubspec.yaml", "go.mod", "package.swift", "cmakelists.txt", "tsconfig.json"
     ]
 
-    static func find(in roots: [URL], config: Config = Config()) -> [JunkItem] {
-        let fm = FileManager.default
-        var items: [JunkItem] = []
+    static func find(in roots: [URL], scope: Scope = .all, config: Config = Config()) -> [JunkItem] {
+        let extras = Keep.extraPaths   // one UserDefaults read, not one per entry
+        var candidates: [(url: URL, kind: Kind)] = []
         var seen = Set<String>()
-        var n = 0
-        for root in roots {
-            guard let en = fm.enumerator(
-                at: root,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsPackageDescendants]   // keep hidden (.venv/.next); skip .app internals
-            ) else { continue }
-            for case let dir as URL in en {
-                ScanThrottle.tickSync(every: 400, counter: &n)
-                if n > config.walkCap { break }
-                let name = dir.lastPathComponent
-                if name == ".git" { en.skipDescendants(); continue }
-                if Keep.isProtected(dir) { en.skipDescendants(); continue }
-                guard let kind = catalog[name] else { continue }
-                var isDir: ObjCBool = false
-                guard fm.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else { continue }
-                en.skipDescendants() // never walk inside an artifact folder
-
+        var walked = 0
+        for root in roots where walked <= config.walkCap {
+            for (dir, kind) in discover(root, extras: extras, walked: &walked, cap: config.walkCap) {
+                if scope == .outputs, kind.isDependency { continue }
+                if scope == .dependencies, !kind.isDependency { continue }
                 if kind.needsMarker, !hasProjectMarker(dir.deletingLastPathComponent()) { continue }
-                let bytes = DiskSizer.bytes(at: dir)
-                guard bytes >= config.minFolderBytes else { continue }
-                let key = dir.standardizedFileURL.path
-                guard seen.insert(key).inserted else { continue }
-
-                items.append(JunkItem(
-                    id: "art-\(StableID.of(key))",
-                    module: .dev,
-                    title: Line.proper("\(name) · \(PathFormat.tilde(dir.deletingLastPathComponent()))"),
-                    subtitle: kind.sub,
-                    url: dir,
-                    bytes: bytes,
-                    selected: kind.onByDefault,
-                    kind: .deleteItem,
-                    keepsLogins: false
-                ))
+                guard seen.insert(dir.path).inserted else { continue }
+                candidates.append((dir, kind))
             }
         }
-        return Array(items.sorted { $0.bytes > $1.bytes }.prefix(config.maxItems))
+
+        // Size the candidates concurrently: most are small folders (__pycache__, build/) where the
+        // cost is syscall latency, not bandwidth — keeping several in flight is what `du` can't do.
+        let work = candidates
+        let sink = ItemSink()
+        DispatchQueue.concurrentPerform(iterations: work.count) { i in
+            let (dir, kind) = work[i]
+            let bytes = DiskSizer.bytes(at: dir)
+            guard bytes >= config.minFolderBytes else { return }
+            sink.add(JunkItem(
+                id: "art-\(StableID.of(dir.path))",
+                module: .dev,
+                title: Line.proper("\(dir.lastPathComponent) · \(PathFormat.tilde(dir.deletingLastPathComponent()))"),
+                subtitle: kind.sub,
+                url: dir,
+                bytes: bytes,
+                selected: kind.onByDefault,
+                kind: .deleteItem,
+                keepsLogins: false
+            ))
+        }
+        return Array(sink.all.sorted { ($0.bytes, $0.id) > ($1.bytes, $1.id) }.prefix(config.maxItems))
+    }
+
+    /// Package extensions we never walk into (what Foundation's `.skipsPackageDescendants` did).
+    private static let bundleExtensions: Set<String> = [
+        "app", "framework", "bundle", "plugin", "appex", "kext", "xpc", "dsym",
+        "xcodeproj", "xcworkspace", "xcarchive", "playground",
+        "photoslibrary", "musiclibrary", "tvlibrary", "fcpbundle", "logicx", "band",
+        "rtfd", "pages", "numbers", "key", "sketch"
+    ]
+
+    /// Every artifact directory under `root`, via fts with FTS_NOSTAT: directories are known from
+    /// readdir's d_type and files are never stat-ed or turned into URLs. Never descends into an
+    /// artifact, `.git`, a bundle, or a `Keep`-protected directory — protection is checked before an
+    /// artifact is ever reported.
+    private static func discover(
+        _ root: URL, extras: [String], walked: inout Int, cap: Int
+    ) -> [(URL, Kind)] {
+        guard let cRoot = strdup(root.standardizedFileURL.path) else { return [] }
+        defer { free(cRoot) }
+        var argv: [UnsafeMutablePointer<CChar>?] = [cRoot, nil]
+        guard let fts = fts_open(&argv, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV | FTS_NOSTAT, nil) else {
+            return []
+        }
+        defer { fts_close(fts) }
+
+        var out: [(URL, Kind)] = []
+        while let ent = fts_read(fts) {
+            ScanThrottle.tickSync(every: 400, counter: &walked)
+            if walked > cap { break }
+            guard Int32(ent.pointee.fts_info) == FTS_D else { continue }
+            let path = String(cString: ent.pointee.fts_path)
+            if Keep.isProtected(path: path, extras: extras) || Keep.isProtected(path: path + "/", extras: extras) {
+                _ = fts_set(fts, ent, FTS_SKIP)
+                continue
+            }
+            guard ent.pointee.fts_level > 0 else { continue }
+            let nameLen = Int(ent.pointee.fts_namelen)
+            let name = String(cString: ent.pointee.fts_path + (Int(ent.pointee.fts_pathlen) - nameLen))
+            if name == ".git" {
+                _ = fts_set(fts, ent, FTS_SKIP)
+            } else if let kind = catalog[name] {
+                _ = fts_set(fts, ent, FTS_SKIP)   // never walk inside an artifact folder
+                out.append((URL(fileURLWithPath: path, isDirectory: true), kind))
+            } else if let dot = name.lastIndex(of: "."), dot != name.startIndex,
+                      bundleExtensions.contains(name[name.index(after: dot)...].lowercased()) {
+                _ = fts_set(fts, ent, FTS_SKIP)
+            }
+        }
+        return out
+    }
+
+    private final class ItemSink: @unchecked Sendable {
+        private let lock = NSLock()
+        private var xs: [JunkItem] = []
+        func add(_ x: JunkItem) { lock.lock(); xs.append(x); lock.unlock() }
+        var all: [JunkItem] { lock.lock(); defer { lock.unlock() }; return xs }
     }
 
     private static func hasProjectMarker(_ projectDir: URL) -> Bool {

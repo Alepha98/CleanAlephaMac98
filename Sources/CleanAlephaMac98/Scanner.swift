@@ -71,6 +71,9 @@ enum Scanner {
 
     enum ScanStage: Int, CaseIterable, Sendable {
         case junk, mail, trash, leftovers, large, duplicates, browsers, dev, messengers, privacy
+        /// node_modules / .venv / Pods inside project folders — the heavy half of Developer.
+        case projects
+
         func items() -> [JunkItem] {
             switch self {
             case .junk: Scanner.junk()
@@ -83,6 +86,7 @@ enum Scanner {
             case .dev: Scanner.dev()
             case .messengers: Scanner.messengers()
             case .privacy: DeepScan.privacyItems()
+            case .projects: Scanner.projectArtifacts()
             }
         }
 
@@ -95,14 +99,24 @@ enum Scanner {
             case .large: .large
             case .duplicates: .duplicates
             case .browsers: .browsers
-            case .dev: .dev
+            case .dev, .projects: .dev
             case .messengers: .messengers
             case .privacy: .privacy
             }
         }
 
+        /// Heavy stages that walk / hash / decode tens of GB and only produce off-by-default "review"
+        /// cards. Smart skips them so it stays fast and its one-click clean stays safe; they run when
+        /// their layer is opened. (Measured: these were ~150s of a 163s Smart scan.)
+        var isDeep: Bool {
+            switch self {
+            case .large, .duplicates, .projects: true
+            default: false
+            }
+        }
+
         static func stages(for module: Module) -> [ScanStage] {
-            if module == .smart { return Array(allCases) }
+            if module == .smart { return allCases.filter { !$0.isDeep } }
             return allCases.filter { $0.module == module }
         }
     }
@@ -798,9 +812,21 @@ enum Scanner {
         let td = Date()
         rows.append(contentsOf: DeepScan.devExtras())
         profMark("dev.extras", td)
+        // Build output inside projects (build/, .next, target, __pycache__…) regenerates itself and is
+        // on by default — the biggest safe win on a dev machine, so it rides along with Smart.
+        let to = Date()
+        rows.append(contentsOf: ProjectArtifactFinder.find(in: ProjectArtifactFinder.defaultRoots(), scope: .outputs))
+        profMark("dev.outputs", to)
+        return dedupeByURL(rows).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
+    }
+
+    /// The deep half of Developer: dependency folders inside projects (node_modules / .venv / Pods).
+    /// Off by default (they need a reinstall) and the heaviest trees to size — sized only when the
+    /// Developer layer is opened.
+    private static func projectArtifacts() -> [JunkItem] {
         let tp = Date()
-        rows.append(contentsOf: ProjectArtifactFinder.find(in: ProjectArtifactFinder.defaultRoots()))
-        profMark("dev.artifacts", tp)
+        let rows = ProjectArtifactFinder.find(in: ProjectArtifactFinder.defaultRoots(), scope: .dependencies)
+        profMark("dev.dependencies", tp)
         return dedupeByURL(rows).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
     }
 
@@ -932,5 +958,19 @@ enum Scanner {
             }
         }
         return total
+    }
+}
+
+extension Module {
+    /// Some of this layer's stages are deep (Smart skips them) — opening the layer runs them.
+    var hasDeepStages: Bool {
+        Scanner.ScanStage.allCases.contains { $0.module == self && $0.isDeep }
+    }
+
+    /// Smart runs none of this layer's stages (Large files, Duplicates): it only ever has results
+    /// from its own scan, so those results survive a new Smart scan.
+    var isDeepOnly: Bool {
+        let own = Scanner.ScanStage.allCases.filter { $0.module == self }
+        return !own.isEmpty && own.allSatisfy(\.isDeep)
     }
 }

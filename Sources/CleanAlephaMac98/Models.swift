@@ -192,10 +192,15 @@ enum Keep {
     }
 
     static func isProtected(_ url: URL) -> Bool {
-        let p = url.standardizedFileURL.path
+        isProtected(path: url.standardizedFileURL.path, extras: extraPaths)
+    }
+
+    /// Hot-loop form for the directory walker: `p` must already be an absolute, standardized path,
+    /// and `extras` is one snapshot of `extraPaths` (the property re-reads UserDefaults every call).
+    static func isProtected(path p: String, extras: [String]) -> Bool {
         if pathFragments.contains(where: { p.contains($0) }) { return true }
-        for extra in extraPaths {
-            if p == extra || p.hasPrefix(extra + "/") { return true }
+        for extra in extras where p == extra || p.hasPrefix(extra + "/") {
+            return true
         }
         return false
     }

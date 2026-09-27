@@ -37,6 +37,56 @@ final class DiskSizerTests: XCTestCase {
         XCTAssertGreaterThan(total, Int64(mb) / 2, "keep.bin should still count")
     }
 
+    /// The fts walker must agree with the per-file allocated sizes the old enumerator summed.
+    func testMatchesSumOfPerFileAllocatedSizes() {
+        tree.write("m/a.bin", FixtureTree.bytes(mb))
+        tree.write("m/b/c.bin", FixtureTree.bytes(3 * mb / 2, seed: 3))
+        tree.write("m/b/.d.bin", FixtureTree.bytes(700_000, seed: 9))
+        tree.write("m/b/e/f.txt", Data("small".utf8))
+        let dir = tree.root.appendingPathComponent("m")
+
+        var expected: Int64 = 0
+        let en = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey])!
+        for case let url as URL in en {
+            let rv = try? url.resourceValues(forKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey])
+            if rv?.isRegularFile == true { expected += Int64(rv?.totalFileAllocatedSize ?? 0) }
+        }
+        XCTAssertEqual(DiskSizer.walk(dir), expected)
+    }
+
+    /// A hard-linked file frees its blocks once — it must be counted once.
+    func testHardLinkCountedOnce() throws {
+        let a = tree.write("h/a.bin", FixtureTree.bytes(2 * mb))
+        let single = DiskSizer.walk(tree.root.appendingPathComponent("h"))
+        try FileManager.default.linkItem(at: a, to: tree.root.appendingPathComponent("h/b.bin"))
+        XCTAssertEqual(DiskSizer.walk(tree.root.appendingPathComponent("h")), single)
+    }
+
+    /// Symlinks are never followed (a link to something big elsewhere isn't this folder's size).
+    func testSymlinkNotFollowed() throws {
+        let big = tree.write("elsewhere/big.bin", FixtureTree.bytes(4 * mb))
+        tree.write("s/own.bin", FixtureTree.bytes(mb))
+        try FileManager.default.createSymbolicLink(
+            at: tree.root.appendingPathComponent("s/link.bin"), withDestinationURL: big)
+        try FileManager.default.createSymbolicLink(
+            at: tree.root.appendingPathComponent("s/linkdir"), withDestinationURL: big.deletingLastPathComponent())
+        XCTAssertLessThan(DiskSizer.walk(tree.root.appendingPathComponent("s")), Int64(2 * mb))
+    }
+
+    /// Credential / login-data names (Keep.names) are never counted, file or folder.
+    func testCredentialNamesAreNotCounted() {
+        tree.write("k/plain.bin", FixtureTree.bytes(mb))
+        tree.write("k/Cookies", FixtureTree.bytes(3 * mb))
+        tree.write("k/Local Storage/leveldb.bin", FixtureTree.bytes(3 * mb))
+        XCTAssertLessThan(DiskSizer.walk(tree.root.appendingPathComponent("k")), Int64(2 * mb))
+    }
+
+    /// Package contents count — a wipe of the parent frees them too.
+    func testPackageContentsAreCounted() {
+        tree.write("p/Updater.app/Contents/MacOS/Updater", FixtureTree.bytes(2 * mb))
+        XCTAssertGreaterThan(DiskSizer.walk(tree.root.appendingPathComponent("p")), Int64(mb))
+    }
+
     func testCacheReturnsStoredValueThenInvalidatesOnChange() {
         let dir = tree.root.appendingPathComponent("c", isDirectory: true)
         tree.write("c/a.bin", FixtureTree.bytes(mb))

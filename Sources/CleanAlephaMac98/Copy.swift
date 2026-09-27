@@ -175,6 +175,8 @@ enum Copy {
     static let careLookingApps = Line(ru: "Смотрю приложения…", en: "Checking applications…")
     static let careLookingClutter = Line(ru: "Смотрю хранилище…", en: "Analyzing storage…")
     static let careWaiting = Line(ru: "Ждёт своей очереди", en: "Waiting its turn")
+    static let careOnDemand = Line(ru: "Отдельный скан — начну, когда откроешь", en: "Separate scan — starts when you open it")
+    static let careTapToScan = Line(ru: "Нажми — просканирую", en: "Tap to scan")
     static let careFound = Line(ru: "Нашли", en: "Found")
     static let aboutApp = Line(ru: "О CleanAlephaMac98", en: "About CleanAlephaMac98")
     static let openGitHub = Line(ru: "Открыть GitHub", en: "Open on GitHub")
