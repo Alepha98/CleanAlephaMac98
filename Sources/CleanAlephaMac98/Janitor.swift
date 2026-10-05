@@ -9,9 +9,12 @@ struct CleanOutcome: Sendable {
     var leftover: Int64
     /// An owning app was open, so cleanup was intentionally refused to preserve its session.
     var blockedApp: String? = nil
+    /// Why the job was refused or only partly done — short and greppable, written to the log
+    /// ("open-app: Google Chrome", "protected", "partial: 3 not removed, first X: Operation not permitted").
+    var reason: String? = nil
 
-    static func refused(leftover: Int64 = 0, blockedApp: String? = nil) -> CleanOutcome {
-        CleanOutcome(freed: 0, failed: true, leftover: leftover, blockedApp: blockedApp)
+    static func refused(leftover: Int64 = 0, blockedApp: String? = nil, reason: String) -> CleanOutcome {
+        CleanOutcome(freed: 0, failed: true, leftover: leftover, blockedApp: blockedApp, reason: reason)
     }
 
     static func alreadyGone(counted bytes: Int64) -> CleanOutcome {
@@ -28,24 +31,25 @@ enum Janitor {
         switch item.kind {
         case .deleteItem, .deleteCaptureRemnants, .wipeChildren, .safariNetworkCache:
             guard isSafeUserTarget(item) else {
-                return .refused(leftover: remainingBytes(for: item))
+                return .refused(leftover: remainingBytes(for: item), reason: "unsafe-target")
             }
         default:
             break
         }
         if Keep.isExtraProtected(item.url) {
-            return .refused(leftover: remainingBytes(for: item))
+            return .refused(leftover: remainingBytes(for: item), reason: "user-excluded")
         }
         if Keep.isProtected(item.url), !Keep.allowsExplicitCard(item) {
-            return .refused(leftover: remainingBytes(for: item))
+            return .refused(leftover: remainingBytes(for: item), reason: "protected")
         }
         if Keep.names.contains(item.url.lastPathComponent) {
-            return .refused(leftover: remainingBytes(for: item))
+            return .refused(leftover: remainingBytes(for: item), reason: "protected-name")
         }
         if let app = SessionGuard.blockingOwner(for: item) {
             return .refused(
                 leftover: remainingBytes(for: item),
-                blockedApp: app
+                blockedApp: app,
+                reason: "open-app: \(app)"
             )
         }
         switch item.kind {
@@ -118,10 +122,12 @@ enum Janitor {
         if result.before == 0 {
             return .alreadyGone(counted: 0)
         }
+        let failed = result.failed || result.after > 16_384
         return CleanOutcome(
             freed: max(0, result.before - result.after),
-            failed: result.failed || result.after > 16_384,
-            leftover: result.after
+            failed: failed,
+            leftover: result.after,
+            reason: failed ? "remnants-left: \(result.after) bytes" : nil
         )
     }
 
@@ -130,7 +136,7 @@ enum Janitor {
         if ok {
             return CleanOutcome(freed: item.bytes, failed: false, leftover: 0)
         }
-        return .refused(leftover: item.bytes)
+        return .refused(leftover: item.bytes, reason: "tab-not-closed")
     }
 
     /// User documents (Large / Duplicates) go to the Trash so a mistake stays recoverable;
@@ -155,10 +161,10 @@ enum Janitor {
         do {
             try discard(item.url, module: item.module)
         } catch {
-            return .refused(leftover: remainingBytes(for: item))
+            return .refused(leftover: remainingBytes(for: item), reason: "error: \(describe(error))")
         }
         if fm.fileExists(atPath: item.url.path) {
-            return .refused(leftover: remainingBytes(for: item))
+            return .refused(leftover: remainingBytes(for: item), reason: "still-present")
         }
         return CleanOutcome(freed: freed, failed: false, leftover: 0)
     }
@@ -169,28 +175,29 @@ enum Janitor {
         guard fm.fileExists(atPath: url.path) else {
             return .alreadyGone(counted: before)
         }
-        guard let kids = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) else {
-            return .refused(leftover: before)
+        let kids: [URL]
+        do { kids = try fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) } catch {
+            return .refused(leftover: before, reason: "unreadable: \(describe(error))")
         }
-        var anyFail = false
+        var misses = Misses()
         for k in kids {
             if Keep.isProtected(k) || Keep.names.contains(k.lastPathComponent) {
                 continue
             }
-            do { try fm.removeItem(at: k) } catch { anyFail = true }
+            do { try fm.removeItem(at: k) } catch { misses.note(k, error) }
         }
         let after = DiskSizer.bytes(at: url)
-        let freed = max(0, before - after)
-        return CleanOutcome(freed: freed, failed: anyFail && after > 16_384, leftover: after)
+        return misses.outcome(before: before, after: after)
     }
 
     private static func safariCaches(_ store: URL) -> CleanOutcome {
         let allowed = Set(["NetworkCache", "CacheStorage", "MediaCache", "JavaScriptCoreDebug", "ResourceMonitorThrottler"])
         let before = DiskSizer.bytes(at: store)
-        var anyFail = false
+        var misses = Misses()
         func scrub(_ dir: URL) {
-            guard let kids = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
-                anyFail = true
+            let kids: [URL]
+            do { kids = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) } catch {
+                misses.note(dir, error)
                 return
             }
             for k in kids {
@@ -201,7 +208,7 @@ enum Janitor {
                         try FileManager.default.removeItem(at: k)
                         try FileManager.default.createDirectory(at: k, withIntermediateDirectories: true)
                     } catch {
-                        anyFail = true
+                        misses.note(k, error)
                     }
                 } else if k.lastPathComponent.count >= 20 {
                     scrub(k)
@@ -210,15 +217,14 @@ enum Janitor {
         }
         scrub(store)
         let after = DiskSizer.bytes(at: store)
-        let freed = max(0, before - after)
-        return CleanOutcome(freed: freed, failed: anyFail && after > 16_384, leftover: after)
+        return misses.outcome(before: before, after: after)
     }
 
     private static func wipeChildren(_ item: JunkItem) -> CleanOutcome {
         let url = item.url
         if Keep.names.contains(url.lastPathComponent)
             || (Keep.isProtected(url) && !Keep.allowsExplicitCard(item)) {
-            return .refused(leftover: DiskSizer.bytes(at: url))
+            return .refused(leftover: DiskSizer.bytes(at: url), reason: "protected")
         }
         let fm = FileManager.default
         let explicitProtected = Keep.allowsExplicitCard(item) && Keep.isProtected(url)
@@ -234,24 +240,24 @@ enum Janitor {
                 try fm.removeItem(at: url)
                 return CleanOutcome(freed: before, failed: false, leftover: 0)
             } catch {
-                return .refused(leftover: before)
+                return .refused(leftover: before, reason: "error: \(describe(error))")
             }
         }
-        guard let kids = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) else {
-            return .refused(leftover: before)
+        let kids: [URL]
+        do { kids = try fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) } catch {
+            return .refused(leftover: before, reason: "unreadable: \(describe(error))")
         }
-        var anyFail = false
+        var misses = Misses()
         let allowsBuiltInProtection = Keep.allowsExplicitCard(item)
         for k in kids {
             if Keep.names.contains(k.lastPathComponent) || Keep.isExtraProtected(k) { continue }
             if Keep.isProtected(k), !allowsBuiltInProtection { continue }
-            do { try fm.removeItem(at: k) } catch { anyFail = true }
+            do { try fm.removeItem(at: k) } catch { misses.note(k, error) }
         }
         let after = explicitProtected
             ? (DiskSizer.duSK(url, timeout: 8) ?? before)
             : DiskSizer.bytes(at: url)
-        let freed = max(0, before - after)
-        return CleanOutcome(freed: freed, failed: anyFail && after > 16_384, leftover: after)
+        return misses.outcome(before: before, after: after)
     }
 
     private static func removeAgent(_ item: JunkItem) -> CleanOutcome {
@@ -259,10 +265,10 @@ enum Janitor {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let p = url.standardizedFileURL.path
         guard p.hasPrefix(home), p.contains("/Library/LaunchAgents/"), url.pathExtension == "plist" else {
-            return .refused(leftover: item.bytes)
+            return .refused(leftover: item.bytes, reason: "not-a-user-agent")
         }
         if url.lastPathComponent.contains("CleanAlephaMac98") {
-            return .refused(leftover: item.bytes)
+            return .refused(leftover: item.bytes, reason: "own-agent")
         }
         let label = url.deletingPathExtension().lastPathComponent
         let task = Process()
@@ -275,7 +281,7 @@ enum Janitor {
         do {
             try FileManager.default.removeItem(at: url)
         } catch {
-            return .refused(leftover: DiskSizer.bytes(at: url))
+            return .refused(leftover: DiskSizer.bytes(at: url), reason: "error: \(describe(error))")
         }
         return CleanOutcome(freed: item.bytes, failed: false, leftover: 0)
     }
@@ -286,12 +292,52 @@ enum Janitor {
         let name = item.title.ru
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        guard !name.isEmpty else { return .refused(leftover: 0) }
+        guard !name.isEmpty else { return .refused(leftover: 0, reason: "login-item: no name") }
         let source = "tell application \"System Events\" to delete login item \"\(name)\""
         var error: NSDictionary?
-        guard let script = NSAppleScript(source: source) else { return .refused(leftover: 0) }
+        guard let script = NSAppleScript(source: source) else { return .refused(leftover: 0, reason: "login-item: script") }
         _ = script.executeAndReturnError(&error)
-        if error != nil { return .refused(leftover: item.bytes) }
+        if let error {
+            let message = error[NSAppleScript.errorMessage] as? String ?? "\(error[NSAppleScript.errorNumber] ?? "?")"
+            return .refused(leftover: item.bytes, reason: "login-item: \(message)")
+        }
         return CleanOutcome(freed: item.bytes, failed: false, leftover: 0)
+    }
+
+    /// Short English cause for the log: the POSIX text when there is one ("Operation not permitted"
+    /// usually means a privacy/SIP block, "Resource busy" an open file), never the localized essay.
+    static func describe(_ error: Error) -> String {
+        let ns = error as NSError
+        if let posix = ns.userInfo[NSUnderlyingErrorKey] as? NSError, posix.domain == NSPOSIXErrorDomain {
+            return String(cString: strerror(Int32(posix.code)))
+        }
+        if ns.domain == NSPOSIXErrorDomain { return String(cString: strerror(Int32(ns.code))) }
+        return "\(ns.domain) \(ns.code)"
+    }
+
+    /// One log line per refused or partial job, for the auto run and the Clean button alike.
+    static func logLine(_ prefix: String, _ item: JunkItem, _ outcome: CleanOutcome) -> String {
+        "\(prefix) \(outcome.reason ?? "failed") | \(ByteFormat.string(outcome.leftover, .en)) | \(PathFormat.tilde(item.url))"
+    }
+
+    /// Children a wipe could not remove: how many, and the first one with its cause.
+    private struct Misses {
+        var count = 0
+        var first: String?
+
+        mutating func note(_ url: URL, _ error: Error) {
+            count += 1
+            if first == nil { first = "\(url.lastPathComponent): \(Janitor.describe(error))" }
+        }
+
+        func outcome(before: Int64, after: Int64) -> CleanOutcome {
+            let failed = count > 0 && after > 16_384
+            return CleanOutcome(
+                freed: max(0, before - after),
+                failed: failed,
+                leftover: after,
+                reason: failed ? "partial: \(count) not removed, first \(first ?? "?")" : nil
+            )
+        }
     }
 }

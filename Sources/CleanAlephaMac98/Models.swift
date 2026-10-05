@@ -211,6 +211,7 @@ enum Keep {
     /// Machine-agnostic: VMs, simulators, Photos. Named iCloud libraries only under CloudDocs.
     static let pathFragments: [String] = [
         "/.colima", "/Parallels/", "/.gradle",
+        "/Library/Logs/CleanAlephaMac98",
         "/CoreSimulator", "/iOS DeviceSupport",
         "/Library/Application Support/MobileSync/Backup",
         "/Library/Group Containers/group.com.apple.screencapture",

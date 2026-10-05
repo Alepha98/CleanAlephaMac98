@@ -1147,6 +1147,7 @@ final class AppState {
             freed += outcome.freed
             lastFreed = freed
             if outcome.failed {
+                CamLog.line(Janitor.logLine("clean skip", item, outcome))
                 failed += 1
                 if let app = outcome.blockedApp { blockedApps.insert(app) }
                 if let i = items.firstIndex(where: { $0.id == item.id }) {

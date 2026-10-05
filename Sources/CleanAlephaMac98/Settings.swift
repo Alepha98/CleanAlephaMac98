@@ -153,6 +153,7 @@ enum AutoClean {
     static func runAndExit() -> Never {
         var freed: Int64 = 0
         var failed = 0
+        var causes: [String: Int] = [:]
         // Only Smart's light stages: unattended cleanup can only ever take safe Junk / Browsers /
         // Developer cards, so walking Large, Duplicates or the forensic hunts here was minutes of
         // background work whose results were always thrown away.
@@ -161,10 +162,15 @@ enum AutoClean {
             for item in chunk.items where isUnattended(item) {
                 let outcome = Janitor.clean(item)
                 freed += outcome.freed
-                if outcome.failed { failed += 1 }
+                if outcome.failed {
+                    failed += 1
+                    CamLog.line(Janitor.logLine("auto skip", item, outcome))
+                    let cause = (outcome.reason ?? "failed").split(separator: ":").first.map(String.init) ?? "failed"
+                    causes[cause, default: 0] += 1
+                }
             }
         }
-        appendLog(freed: freed, failed: failed)
+        appendLog(freed: freed, failed: failed, causes: causes)
         Foundation.exit(0)
     }
 
@@ -180,20 +186,10 @@ enum AutoClean {
         }
     }
 
-    static func appendLog(freed: Int64, failed: Int) {
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "en_US_POSIX")
-        fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        let line = "\(fmt.string(from: Date())) auto done freed \(freed) failed \(failed)\n"
-        let url = AutoAgent.logURL
-        let fm = FileManager.default
-        try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if fm.fileExists(atPath: url.path), let handle = try? FileHandle(forWritingTo: url) {
-            defer { try? handle.close() }
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: Data(line.utf8))
-        } else {
-            try? Data(line.utf8).write(to: url)
-        }
+    /// `Maintenance.snapshot()` parses "auto done freed <n>" — keep that prefix; causes go after it.
+    static func appendLog(freed: Int64, failed: Int, causes: [String: Int] = [:]) {
+        let tally = causes.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+            .map { "\($0.key) \($0.value)" }.joined(separator: ", ")
+        CamLog.line("auto done freed \(freed) failed \(failed)" + (tally.isEmpty ? "" : " (\(tally))"))
     }
 }
