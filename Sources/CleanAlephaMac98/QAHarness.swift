@@ -1590,6 +1590,134 @@ enum QAHarness {
         exit(2)
     }
 
+    /// Read-only "what fills this folder" with the app's own Full Disk Access (a Terminal can't read
+    /// e.g. Chrome's data on recent macOS). Logs depth-1/2 folders ≥ 50 MB and files ≥ 100 MB.
+    /// Launch through LaunchServices so the app's privacy grants apply:
+    ///   open -n CleanAlephaMac98.app --args --qa-du=~/Library/Application\ Support/Google/Chrome
+    static func diskUsage(_ rawPath: String) -> Never {
+        let root = URL(fileURLWithPath: (rawPath as NSString).expandingTildeInPath)
+        let started = Date()
+        let keys: [URLResourceKey] = [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .isRegularFileKey]
+        var byDir: [String: Int64] = [:]
+        var bigFiles: [(Int64, String)] = []
+        var total: Int64 = 0
+        var unreadable = 0
+        let rootComponents = root.standardizedFileURL.pathComponents.count
+        let walker = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: keys, options: [],
+            errorHandler: { _, _ in unreadable += 1; return true }
+        )
+        while let url = walker?.nextObject() as? URL {
+            guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
+            let size = Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
+            total += size
+            let parts = url.standardizedFileURL.pathComponents
+            for depth in 1...2 where parts.count > rootComponents + depth {
+                let key = parts[rootComponents..<(rootComponents + depth)].joined(separator: "/")
+                byDir[key, default: 0] += size
+            }
+            if size >= 100_000_000 { bigFiles.append((size, PathFormat.tilde(url))) }
+        }
+        CamLog.line("qa du root=\(PathFormat.tilde(root)) total=\(total) unreadable=\(unreadable) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+        for (dir, bytes) in byDir.sorted(by: { $0.value > $1.value }) where bytes >= 50_000_000 {
+            CamLog.line("qa du dir \(bytes) \(dir)")
+        }
+        for (bytes, path) in bigFiles.sorted(by: { $0.0 > $1.0 }).prefix(40) {
+            CamLog.line("qa du file \(bytes) \(path)")
+        }
+        exit(0)
+    }
+
+    /// Read-only Chrome storage map (run through LaunchServices for the app's grants): profile names,
+    /// extensions by name/size, per-site storage (File System origins, IndexedDB, Service Worker).
+    /// Never touches cookies, passwords or history.
+    static func chromeReport() -> Never {
+        let fm = FileManager.default
+        let base = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Google/Chrome")
+        func size(_ url: URL) -> Int64 {
+            var total: Int64 = 0
+            let e = fm.enumerator(at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey], options: [])
+            while let u = e?.nextObject() as? URL {
+                total += Int64((try? u.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?.totalFileAllocatedSize ?? 0)
+            }
+            return total
+        }
+        func json(_ url: URL) -> [String: Any]? {
+            guard let d = try? Data(contentsOf: url) else { return nil }
+            return (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
+        }
+        var profiles: [String] = []
+        if let state = json(base.appendingPathComponent("Local State")),
+           let cache = (state["profile"] as? [String: Any])?["info_cache"] as? [String: Any] {
+            for (dir, info) in cache.sorted(by: { $0.key < $1.key }) {
+                let name = (info as? [String: Any])?["name"] as? String ?? "?"
+                profiles.append(dir)
+                CamLog.line("qa chrome profile \(dir) name=\(name)")
+            }
+        }
+        for dir in profiles {
+            let p = base.appendingPathComponent(dir)
+            // Extensions: id → readable name (resolving __MSG_x__ through _locales).
+            let extRoot = p.appendingPathComponent("Extensions")
+            for ext in (try? fm.contentsOfDirectory(at: extRoot, includingPropertiesForKeys: nil)) ?? [] {
+                let bytes = size(ext)
+                guard bytes >= 20_000_000 else { continue }
+                let version = ((try? fm.contentsOfDirectory(at: ext, includingPropertiesForKeys: nil)) ?? []).sorted { $0.path < $1.path }.last
+                var name = "?"
+                if let v = version, let m = json(v.appendingPathComponent("manifest.json")) {
+                    name = m["name"] as? String ?? "?"
+                    if name.hasPrefix("__MSG_"), name.hasSuffix("__") {
+                        let key = String(name.dropFirst(6).dropLast(2))
+                        let locale = m["default_locale"] as? String ?? "en"
+                        for loc in [locale, "en", "ru"] {
+                            if let msgs = json(v.appendingPathComponent("_locales/\(loc)/messages.json")),
+                               let entry = msgs.first(where: { $0.key.lowercased() == String(key).lowercased() })?.value as? [String: Any],
+                               let message = entry["message"] as? String {
+                                name = message; break
+                            }
+                        }
+                    }
+                }
+                CamLog.line("qa chrome ext \(dir) \(bytes) \(ext.lastPathComponent) \(name)")
+            }
+            // File System: numbered dirs; origin names from the Origins LevelDB (ORIGIN:<id> → NNN).
+            let fsRoot = p.appendingPathComponent("File System")
+            var originOf: [String: String] = [:]
+            for f in (try? fm.contentsOfDirectory(at: fsRoot.appendingPathComponent("Origins"), includingPropertiesForKeys: nil)) ?? [] {
+                guard let d = try? Data(contentsOf: f) else { continue }
+                let bytes = [UInt8](d)
+                let marker = Array("ORIGIN:".utf8)
+                var i = 0
+                while i + marker.count < bytes.count {
+                    if Array(bytes[i..<(i + marker.count)]) == marker {
+                        var j = i + marker.count
+                        while j < bytes.count, bytes[j] >= 0x21, bytes[j] < 0x7F { j += 1 }
+                        let origin = String(decoding: bytes[(i + marker.count)..<j], as: UTF8.self)
+                        // value record follows: <len><digits>
+                        if j + 1 < bytes.count, bytes[j] >= 1, bytes[j] <= 4, j + 1 + Int(bytes[j]) <= bytes.count {
+                            let v = String(decoding: bytes[(j + 1)..<(j + 1 + Int(bytes[j]))], as: UTF8.self)
+                            if v.allSatisfy(\.isNumber) { originOf[v] = origin }
+                        }
+                        i = j
+                    } else { i += 1 }
+                }
+            }
+            for sub in (try? fm.contentsOfDirectory(at: fsRoot, includingPropertiesForKeys: nil)) ?? [] {
+                let n = sub.lastPathComponent
+                guard n.allSatisfy(\.isNumber) else { continue }
+                let bytes = size(sub)
+                if bytes >= 20_000_000 { CamLog.line("qa chrome fs \(dir) \(bytes) \(n) \(originOf[n] ?? "?")") }
+            }
+            for (store, label) in [("IndexedDB", "idb"), ("Service Worker/CacheStorage", "sw"), ("Local Storage", "ls")] {
+                for sub in (try? fm.contentsOfDirectory(at: p.appendingPathComponent(store), includingPropertiesForKeys: nil)) ?? [] {
+                    let bytes = size(sub)
+                    if bytes >= 20_000_000 { CamLog.line("qa chrome \(label) \(dir) \(bytes) \(sub.lastPathComponent)") }
+                }
+            }
+        }
+        exit(0)
+    }
+
     static func storageIntelligenceScan() -> Never {
         let started = Date()
         let rows = StorageIntelligenceScanner.items()

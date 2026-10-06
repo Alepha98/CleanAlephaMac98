@@ -133,6 +133,12 @@ struct CleanAlephaMac98App: App {
         if CommandLine.arguments.contains("--qa-cancellation") {
             QAHarness.cancellation()
         }
+        if CommandLine.arguments.contains("--qa-chrome") {
+            QAHarness.chromeReport()
+        }
+        if let arg = CommandLine.arguments.first(where: { $0.hasPrefix("--qa-du=") }) {
+            QAHarness.diskUsage(String(arg.dropFirst("--qa-du=".count)))
+        }
         if CommandLine.arguments.contains("--qa-smart") {
             QAHarness.smart()
         }
