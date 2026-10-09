@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 import CoreGraphics
@@ -1715,6 +1716,59 @@ enum QAHarness {
                 }
             }
         }
+        exit(0)
+    }
+
+    /// One-off, user-approved Chrome purge (2026-10-06): the on-device Gemini Nano model, offline
+    /// Google Docs storage ("File System") of the Default / Profile 1 / Profile 5 profiles, and caches.
+    /// Fixed allowlist, refuses while any Chrome process runs; never touches cookies, logins,
+    /// history, bookmarks or extensions.
+    static func chromePurge() -> Never {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        let base = home.appendingPathComponent("Library/Application Support/Google/Chrome")
+        let running = NSWorkspace.shared.runningApplications.contains {
+            ($0.bundleIdentifier ?? "").hasPrefix("com.google.Chrome")
+        }
+        if running {
+            CamLog.line("qa chrome-purge refused: Chrome is running")
+            exit(2)
+        }
+        var targets: [URL] = [base.appendingPathComponent("OptGuideOnDeviceModel")]
+        for profile in ["Default", "Profile 1", "Profile 5"] {
+            targets.append(base.appendingPathComponent("\(profile)/File System"))
+        }
+        let profiles = ((try? fm.contentsOfDirectory(atPath: base.path)) ?? [])
+            .filter { $0 == "Default" || $0.hasPrefix("Profile ") }
+        for profile in profiles {
+            for cache in ["Cache", "Code Cache", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache",
+                          "Service Worker/CacheStorage", "Service Worker/ScriptCache"] {
+                targets.append(base.appendingPathComponent("\(profile)/\(cache)"))
+            }
+        }
+        for shared in ["GrShaderCache", "ShaderCache", "GraphiteDawnCache", "component_crx_cache", "extensions_crx_cache"] {
+            targets.append(base.appendingPathComponent(shared))
+        }
+        let httpCache = home.appendingPathComponent("Library/Caches/Google/Chrome")
+        for child in (try? fm.contentsOfDirectory(at: httpCache, includingPropertiesForKeys: nil)) ?? [] {
+            targets.append(child)
+        }
+        var freed: Int64 = 0
+        for url in targets where fm.fileExists(atPath: url.path) {
+            var bytes: Int64 = 0
+            let e = fm.enumerator(at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey], options: [])
+            while let u = e?.nextObject() as? URL {
+                bytes += Int64((try? u.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?.totalFileAllocatedSize ?? 0)
+            }
+            do {
+                try fm.removeItem(at: url)
+                freed += bytes
+                CamLog.line("qa chrome-purge removed \(bytes) \(PathFormat.tilde(url))")
+            } catch {
+                CamLog.line("qa chrome-purge FAILED \(PathFormat.tilde(url)): \(Janitor.describe(error))")
+            }
+        }
+        CamLog.line("qa chrome-purge done freed=\(freed)")
         exit(0)
     }
 

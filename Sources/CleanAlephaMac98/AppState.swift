@@ -1149,7 +1149,12 @@ final class AppState {
             if outcome.failed {
                 CamLog.line(Janitor.logLine("clean skip", item, outcome))
                 failed += 1
-                if let app = outcome.blockedApp { blockedApps.insert(app) }
+                if let app = outcome.blockedApp {
+                    blockedApps.insert(app)
+                    if WatchAgent.isInstalled, let entry = PendingCleanups.entry(for: item, owner: app) {
+                        PendingCleanups.save(PendingCleanups.merge(PendingCleanups.load(), refused: [entry], finished: []))
+                    }
+                }
                 if let i = items.firstIndex(where: { $0.id == item.id }) {
                     // Refused only because its app is open: keep it selected, so "quit the app, press
                     // Clean again" just works. Any other failure is deselected as before.

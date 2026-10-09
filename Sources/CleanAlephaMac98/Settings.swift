@@ -86,8 +86,10 @@ enum AutoAgent {
 
         guard enabled else {
             try? fm.removeItem(at: plistURL)
+            WatchAgent.apply(enabled: false)
             return true
         }
+        WatchAgent.apply(enabled: true)
 
         let times = ScheduleStore.uniqueSorted(slots)
         guard !times.isEmpty, let exe = executablePath() else { return false }
@@ -154,6 +156,8 @@ enum AutoClean {
         var freed: Int64 = 0
         var failed = 0
         var causes: [String: Int] = [:]
+        var queued: [PendingCleanups.Entry] = []
+        var finished: Set<String> = []
         // Only Smart's light stages: unattended cleanup can only ever take safe Junk / Browsers /
         // Developer cards, so walking Large, Duplicates or the forensic hunts here was minutes of
         // background work whose results were always thrown away.
@@ -162,6 +166,11 @@ enum AutoClean {
             for item in chunk.items where isUnattended(item) {
                 let outcome = Janitor.clean(item)
                 freed += outcome.freed
+                if let app = outcome.blockedApp, let entry = PendingCleanups.entry(for: item, owner: app) {
+                    queued.append(entry)
+                } else {
+                    finished.insert(item.id)
+                }
                 if outcome.failed {
                     failed += 1
                     CamLog.line(Janitor.logLine("auto skip", item, outcome))
@@ -169,6 +178,9 @@ enum AutoClean {
                     causes[cause, default: 0] += 1
                 }
             }
+        }
+        if WatchAgent.isInstalled {
+            PendingCleanups.save(PendingCleanups.merge(PendingCleanups.load(), refused: queued, finished: finished))
         }
         appendLog(freed: freed, failed: failed, causes: causes)
         Foundation.exit(0)

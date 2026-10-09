@@ -133,6 +133,15 @@ struct CleanAlephaMac98App: App {
         if CommandLine.arguments.contains("--qa-cancellation") {
             QAHarness.cancellation()
         }
+        if CommandLine.arguments.contains("--watch") {
+            QuitWatcher.run()
+        }
+        if CommandLine.arguments.contains("--watch-install") {
+            exit(WatchAgent.apply(enabled: true) ? 0 : 1)
+        }
+        if CommandLine.arguments.contains("--qa-chrome-purge") {
+            QAHarness.chromePurge()
+        }
         if CommandLine.arguments.contains("--qa-chrome") {
             QAHarness.chromeReport()
         }
