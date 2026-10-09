@@ -121,15 +121,54 @@ final class AppState {
 
     /// All non-zero cards in the current layer — what we found, not only selection.
     var foundBytes: Int64 {
-        visibleItems().filter { $0.bytes > 0 }.reduce(0) { $0 + $1.bytes }
+        visibleItems().reduce(0) { $0 + $1.reclaimableBytes }
     }
 
     @ObservationIgnored
     private var measuringProtected = false
     @ObservationIgnored
+    private var loggedCaptureGap = false
+
+    /// Cards whose cache belongs to an app that is open right now (card id → app name). `SessionGuard`
+    /// refuses those at clean time to keep the app's session intact, so the UI must say so *before*
+    /// Clean is pressed — otherwise "11 GB can be cleaned" frees nothing while Chrome/Telegram are
+    /// open. Recomputed off the main thread after scans, after cleans and on app activation.
+    var sessionBlocked: [String: String] = [:]
+
+    func refreshSessionBlocks() {
+        let candidates = items.filter { $0.bytes > 0 && !$0.module.isLiveModule }
+        guard !candidates.isEmpty else {
+            if !sessionBlocked.isEmpty { sessionBlocked = [:] }
+            return
+        }
+        Task { @MainActor in
+            let map = await Background.run { () -> [String: String] in
+                var out: [String: String] = [:]
+                for item in candidates {
+                    if let app = SessionGuard.blockingOwner(for: item) { out[item.id] = app }
+                }
+                return out
+            }
+            if map != sessionBlocked { sessionBlocked = map }
+        }
+    }
+
+    /// Selected cards in the current view that an open app will make Clean refuse right now.
+    var blockedSelection: (bytes: Int64, apps: [String]) {
+        guard !sessionBlocked.isEmpty else { return (0, []) }
+        let blocked = visibleItems().filter { $0.selected && $0.bytes > 0 && sessionBlocked[$0.id] != nil }
+        let apps = Set(blocked.compactMap { sessionBlocked[$0.id] }).sorted()
+        return (blocked.reduce(Int64(0)) { $0 + $1.bytes }, apps)
+    }
+    @ObservationIgnored
     private var workTask: Task<Void, Never>?
     @ObservationIgnored
     private var workGeneration = 0
+    @ObservationIgnored
+    private var scanCancellation: ScanCancellation?
+    /// Remains true until the synchronous worker has actually drained after Stop.
+    /// This prevents a second scan from overlapping a cancelled disk walk.
+    private var scanWorkerActive = false
     /// Module currently being scanned/cleaned – sidebar stays open for the rest.
     @ObservationIgnored
     private(set) var busyModule: Module?
@@ -152,14 +191,15 @@ final class AppState {
 
     var isBusy: Bool { scanning || cleaning }
 
-    var canScan: Bool { !isBusy }
+    var canScan: Bool { !isBusy && !scanWorkerActive }
 
     var canClean: Bool {
-        !isBusy && module.isCleanupModule && hasScannedCurrent() && selectedBytes > 0
+        !isBusy && !scanWorkerActive && module.isCleanupModule && hasScannedCurrent() && selectedBytes > 0
     }
 
     var canSelectSafe: Bool {
-        !isBusy && module.isCleanupModule && hasScannedCurrent() && visibleItems().contains { $0.bytes > 0 }
+        !isBusy && module.isCleanupModule && hasScannedCurrent()
+            && visibleItems().contains { $0.bytes > 0 && $0.isSafePreset && !$0.selected }
     }
 
     var canDeselect: Bool {
@@ -180,20 +220,32 @@ final class AppState {
     }
 
     func hasScanned(_ m: Module) -> Bool {
-        if m == .space || m == .tools { return false }
+        if m == .space || m == .tools || m == .uninstaller { return false }
         if resultsDismissed.contains(m) { return false }
         // Smart only after an actual smart scan – never borrow a single layer scan.
         if m == .smart { return scannedModules.contains(.smart) }
-        // After smart scan, every cleanup layer (not live) has those results ready.
-        if scannedModules.contains(.smart) && m.isCleanupModule && !m.isLiveModule { return true }
+        // After smart scan, every light cleanup layer (not live) has those results ready. Layers with
+        // deep stages (Large, Duplicates, Developer's project walk) aren't covered by Smart — they
+        // count as scanned only after their own scan, which opening them starts.
+        if scannedModules.contains(.smart) && m.isCleanupModule && !m.isLiveModule && !m.hasDeepStages {
+            return true
+        }
         return scannedModules.contains(m)
     }
 
     /// Smart Care family tile → best layer, with Back to Smart.
     func openCareKind(_ kind: SmartCareKind) {
         let scored: [(Module, Int64)] = kind.modules.map { mod in
-            let sum = items.filter { $0.module == mod && $0.bytes > 0 }.reduce(Int64(0)) { $0 + $1.bytes }
+            let sum = items.filter { $0.module == mod }
+                .reduce(Int64(0)) { $0 + $1.reclaimableBytes }
             return (mod, sum)
+        }
+        // Nothing found yet but a deep layer (Large / Duplicates) hasn't run → open that one; opening
+        // it starts its scan.
+        if scored.allSatisfy({ $0.1 == 0 }),
+           let pending = kind.modules.first(where: { $0.hasDeepStages && !hasScanned($0) }) {
+            openModuleFromSmart(pending)
+            return
         }
         let pick = scored.max(by: { $0.1 < $1.1 })?.0 ?? kind.modules[0]
         openModuleFromSmart(pick)
@@ -217,6 +269,7 @@ final class AppState {
             returnToModule = nil
             module = m
         }
+        scanDeepLayerIfNeeded()
     }
 
     /// Smart overview tile → layer, with Back to Smart.
@@ -228,6 +281,17 @@ final class AppState {
             pulseFocusStack.removeAll()
             module = m
         }
+        scanDeepLayerIfNeeded()
+    }
+
+    /// Large / Duplicates / Developer carry deep stages Smart skips: opening such a layer that hasn't
+    /// been scanned yet starts its scan right away ("heavy scans on demand"). A layer the user sent
+    /// back to its orb with «Scan again» waits for their own Scan press, as before.
+    private func scanDeepLayerIfNeeded() {
+        guard module.hasDeepStages, !isBusy, !hasScanned(module), !resultsDismissed.contains(module) else {
+            return
+        }
+        requestScan()
     }
 
     var canNavigateBack: Bool {
@@ -406,20 +470,21 @@ final class AppState {
     }
 
     func bytes(in module: Module) -> Int64 {
-        items.filter { $0.module == module && $0.bytes > 0 }.reduce(0) { $0 + $1.bytes }
+        items.filter { $0.module == module }.reduce(0) { $0 + $1.reclaimableBytes }
     }
 
     func sidebarBytes(for module: Module) -> Int64 {
-        if module == .space || module == .tools { return 0 }
+        if module == .space || module == .tools || module == .uninstaller { return 0 }
         if module == .pulse, let p = pulse, hasScanned(.pulse) { return p.used }
         if module == .smart {
-            return items.filter { $0.bytes > 0 && !$0.module.isLiveModule }.reduce(0) { $0 + $1.bytes }
+            return items.filter { !$0.module.isLiveModule }
+                .reduce(0) { $0 + $1.reclaimableBytes }
         }
         return bytes(in: module)
     }
 
     func visibleItems() -> [JunkItem] {
-        let pool = cleaning ? items : items.filter { $0.bytes > 0 }
+        let pool = cleaning ? items : items.filter(\.hasVisibleFinding)
         let scoped: [JunkItem]
         if module == .smart {
             scoped = pool.filter { !$0.module.isLiveModule }
@@ -443,16 +508,31 @@ final class AppState {
 
     func refreshFDA() {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let probes = [
+        let protectedProbes = [
             home.appendingPathComponent("Library/Messages/Attachments"),
             home.appendingPathComponent("Library/Messages"),
-            home.appendingPathComponent("Library/Containers/com.apple.Safari"),
-            home.appendingPathComponent("Library/Group Containers")
+            home.appendingPathComponent("Library/Containers/com.apple.Safari")
         ]
-        hasFDA = probes.contains { probe in
+        let capture = home.appendingPathComponent(
+            "Library/Group Containers/group.com.apple.screencapture/ScreenRecordings"
+        )
+        let captureReadable = !FileManager.default.fileExists(atPath: capture.path)
+            || (try? FileManager.default.contentsOfDirectory(atPath: capture.path)) != nil
+        let sensitiveReadable = protectedProbes.contains { probe in
             (try? FileManager.default.contentsOfDirectory(atPath: probe.path)) != nil
         }
-        if hasFDA { dismissedFirstRun = true }
+        // Full Disk Access is what the TCC-protected folders say. The screencapture group container
+        // sits behind macOS's per-app container protection (com.apple.macl), a separate layer — if
+        // it stays shut while FDA is granted, the "grant Full Disk Access" card could never go away.
+        // Log that case for the hidden-captures scan instead of hiding the grant.
+        // Assign only on change: with @Observable every set notifies observers, and this runs on each
+        // app activation — re-setting an unchanged value re-rendered the sidebar and main screen.
+        if hasFDA != sensitiveReadable { hasFDA = sensitiveReadable }
+        if sensitiveReadable, !captureReadable, !loggedCaptureGap {
+            loggedCaptureGap = true
+            CamLog.line("fda granted, screencapture container still not readable")
+        }
+        if hasFDA, !dismissedFirstRun { dismissedFirstRun = true }
     }
 
     func openFDA() {
@@ -586,11 +666,15 @@ final class AppState {
     func selectSafeVisible() {
         guard !isBusy else { return }
         let ids = Set(visibleItems().filter { $0.bytes > 0 }.map(\.id))
-        for i in items.indices where ids.contains(items[i].id) {
-            items[i].selected = items[i].isSafePreset
-        }
+        Self.applySafeSelection(to: &items, visibleIDs: ids)
         withAnimation(Motion.easeMicro) {
             displayedBytes = selectedBytes
+        }
+    }
+
+    nonisolated static func applySafeSelection(to items: inout [JunkItem], visibleIDs: Set<String>) {
+        for i in items.indices where visibleIDs.contains(items[i].id) && items[i].isSafePreset {
+            items[i].selected = true
         }
     }
 
@@ -622,7 +706,7 @@ final class AppState {
 
     @MainActor
     func requestClean() {
-        guard module.isCleanupModule, !isBusy else { return }
+        guard module.isCleanupModule, !isBusy, !scanWorkerActive else { return }
         workTask = Task { @MainActor in
             await clean()
         }
@@ -635,6 +719,7 @@ final class AppState {
             return
         }
         workGeneration += 1
+        scanCancellation?.cancel()
         workTask?.cancel()
         workTask = nil
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -642,21 +727,31 @@ final class AppState {
             let scope = busyModule ?? module
             scanning = false
             busyModule = nil
-            let hasFinds = items.contains { $0.bytes > 0 && (scope == .smart ? !$0.module.isLiveModule : $0.module == scope) }
+            let hasFinds = items.contains {
+                $0.hasVisibleFinding && (scope == .smart ? !$0.module.isLiveModule : $0.module == scope)
+            }
             scanFinished = hasFinds
             statusStopped = true
             status = hasFinds ? Copy.scanStoppedPartial : Copy.scanStoppedEmpty
             if hasFinds {
                 scannedModules.insert(scope)
                 if scope == .smart {
-                    for m in Module.allCases where m.isCleanupModule && !m.isLiveModule {
+                    for m in Module.allCases where m.isCleanupModule && !m.isLiveModule && !m.hasDeepStages {
                         scannedModules.insert(m)
                     }
                 }
             }
+            // Stopped a layer's scan while looking at another layer that has its own results
+            // (e.g. back on Smart during a Large scan): keep showing those results.
+            let showOther = module != scope && hasScannedCurrent()
+            if showOther {
+                scanFinished = true
+                statusStopped = false
+                status = Copy.canClear(selected: selectedBytes, found: foundBytes)
+            }
             withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
-                orbFill = hasFinds ? 0.88 : 0.42
-                progress = hasFinds ? 1 : 0
+                orbFill = (hasFinds || showOther) ? 0.88 : 0.42
+                progress = (hasFinds || showOther) ? 1 : 0
             }
             CamLog.line("cancel scan \(scope.rawValue) finds=\(hasFinds)")
         }
@@ -679,7 +774,7 @@ final class AppState {
 
     @MainActor
     func scan() async {
-        guard !scanning, !cleaning else { return }
+        guard !scanning, !cleaning, !scanWorkerActive else { return }
         let scope = module
         if scope.isLiveModule {
             await scanLive(scope)
@@ -689,6 +784,9 @@ final class AppState {
         guard !stages.isEmpty else { return }
 
         let gen = workGeneration
+        let cancellation = ScanCancellation()
+        scanCancellation = cancellation
+        scanWorkerActive = true
         busyModule = scope
         scanning = true
         scanningStage = nil
@@ -701,8 +799,11 @@ final class AppState {
         refreshFDA()
 
         if scope == .smart {
-            items = []
-            scannedModules = []
+            // Large / Duplicates aren't part of Smart: keep what their own scans found (unless the user
+            // sent that layer back to its orb). Everything Smart covers starts fresh.
+            let keep = Set(scannedModules.filter { $0.isDeepOnly && !resultsDismissed.contains($0) })
+            items.removeAll { !keep.contains($0.module) }
+            scannedModules = keep
             lastFreed = 0
             didCleanThisScan = false
             cleanedInModule = nil
@@ -710,20 +811,29 @@ final class AppState {
         } else {
             items.removeAll { $0.module == scope }
             scannedModules.remove(scope)
-            // Layer scan must not make Smart look scanned.
-            scannedModules.remove(.smart)
+            // A light layer rescan invalidates Smart's snapshot. Opening a deep layer (Large /
+            // Duplicates / Developer) is the normal next step after Smart — keep Smart's results.
+            if !scope.hasDeepStages {
+                scannedModules.remove(.smart)
+            }
         }
 
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         var completed = false
         defer {
+            if scanCancellation === cancellation {
+                scanCancellation = nil
+                scanWorkerActive = false
+                workTask = nil
+            }
             if busyModule == scope { busyModule = nil }
             if isCurrentWork(gen) { scanningStage = nil }
             if !completed, isCurrentWork(gen) {
                 scanning = false
                 lastFailureNote = nil
                 let hasFinds = items.contains {
-                    $0.bytes > 0 && (scope == .smart ? !$0.module.isLiveModule : $0.module == scope)
+                    $0.hasVisibleFinding
+                        && (scope == .smart ? !$0.module.isLiveModule : $0.module == scope)
                 }
                 scanFinished = hasFinds
                 statusStopped = true
@@ -744,16 +854,21 @@ final class AppState {
         let n = max(stages.count, 1)
         CamLog.line("scan start \(scope.rawValue) stages=\(n) parallel")
         var completedStages = 0
-        // Stages scan concurrently (bounded); chunks stream back in completion order.
+        // Stages scan concurrently (bounded); chunks stream back in completion order. The token lets
+        // Stop interrupt the synchronous scanners mid-walk — task cancellation alone can't.
         for await result in ScanCoordinator.stream(stages, work: { stage in
-            (stage: stage, chunk: Scanner.safeItems(for: stage))
+            (stage: stage, chunk: Scanner.safeItems(for: stage, cancellation: cancellation))
         }) {
             guard isCurrentWork(gen) else { return }
             completedStages += 1
             scanningStage = result.stage.module
             if result.chunk.failed { stageErrors += 1 }
             items.append(contentsOf: result.chunk.items)
-            scannedModules.insert(result.stage.module)
+            // Smart's light pass doesn't complete a layer that also has deep stages (Developer's
+            // project walk) — that layer finishes when it's opened.
+            if !(scope == .smart && result.stage.module.hasDeepStages) {
+                scannedModules.insert(result.stage.module)
+            }
             if module == scope {
                 status = Copy.scanning(result.stage.module.name)
                 let targetProgress = Double(completedStages) / Double(n)
@@ -818,19 +933,26 @@ final class AppState {
 
         if scope == .smart {
             scannedModules.insert(.smart)
-            for m in Module.allCases where m.isCleanupModule { scannedModules.insert(m) }
+            for m in Module.allCases where m.isCleanupModule && !m.hasDeepStages { scannedModules.insert(m) }
         } else {
             scannedModules.insert(scope)
         }
 
         let empty = items.filter {
-            $0.bytes > 0 && (scope == .smart ? true : $0.module == scope)
+            $0.hasVisibleFinding && (scope == .smart ? true : $0.module == scope)
         }.isEmpty
+        // The user may have navigated elsewhere mid-scan (e.g. Back to Smart while Large scans). That
+        // layer's own results are still valid — show them rather than falling back to the empty orb.
+        let restoreOther = module != scope && hasScannedCurrent()
         withAnimation(reduce ? Motion.easeReduced : Motion.springOrb) {
             scanning = false
             if module == scope {
                 scanFinished = true
                 orbFill = empty ? 0.12 : 0.88
+                progress = 1
+            } else if restoreOther {
+                scanFinished = true
+                orbFill = 0.88
                 progress = 1
             }
         }
@@ -847,8 +969,12 @@ final class AppState {
                 status = Line(ru: "\(status.ru) \(note.ru)", en: "\(status.en) \(note.en)")
             }
             displayedBytes = selectedBytes
+        } else if restoreOther {
+            status = Copy.canClear(selected: selectedBytes, found: foundBytes)
+            displayedBytes = selectedBytes
         }
         completed = true
+        refreshSessionBlocks()
         CamLog.line("scan done \(scope.rawValue) items=\(items.filter { $0.module == scope || scope == .smart }.count) empty=\(empty) errors=\(stageErrors)")
         if module == scope { GlassTick.play() }
     }
@@ -856,6 +982,7 @@ final class AppState {
     @MainActor
     func scanLive(_ scope: Module) async {
         let gen = workGeneration
+        scanWorkerActive = true
         busyModule = scope
         scanning = true
         scanFinished = false
@@ -871,6 +998,8 @@ final class AppState {
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         var completed = false
         defer {
+            scanWorkerActive = false
+            workTask = nil
             if busyModule == scope { busyModule = nil }
             if !completed, isCurrentWork(gen) {
                 scanning = false
@@ -993,6 +1122,7 @@ final class AppState {
         var freed: Int64 = 0
         var remaining = startSelected
         var failed = 0
+        var blockedApps = Set<String>()
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         withAnimation(Motion.easeMicro) {
             cleaning = true
@@ -1017,9 +1147,18 @@ final class AppState {
             freed += outcome.freed
             lastFreed = freed
             if outcome.failed {
+                CamLog.line(Janitor.logLine("clean skip", item, outcome))
                 failed += 1
+                if let app = outcome.blockedApp {
+                    blockedApps.insert(app)
+                    if WatchAgent.isInstalled, let entry = PendingCleanups.entry(for: item, owner: app) {
+                        PendingCleanups.save(PendingCleanups.merge(PendingCleanups.load(), refused: [entry], finished: []))
+                    }
+                }
                 if let i = items.firstIndex(where: { $0.id == item.id }) {
-                    items[i].selected = false
+                    // Refused only because its app is open: keep it selected, so "quit the app, press
+                    // Clean again" just works. Any other failure is deselected as before.
+                    if outcome.blockedApp == nil { items[i].selected = false }
                     if outcome.leftover > 0 {
                         items[i].bytes = outcome.leftover
                     }
@@ -1061,7 +1200,14 @@ final class AppState {
         didCleanThisScan = true
         cleanedInModule = scope
 
-        if failed == 0 {
+        if !blockedApps.isEmpty {
+            status = Copy.closeAppsFirst(
+                Array(blockedApps).sorted(),
+                freed: freed,
+                failed: failed
+            )
+            lastFailureNote = status
+        } else if failed == 0 {
             status = freed > 0 ? Copy.doneFreed(freed) : Copy.alreadyGone
         } else if freed > 0 {
             status = Copy.someFailed(freed: freed, failed: failed)
@@ -1074,9 +1220,11 @@ final class AppState {
         if freed > 0 {
             CamNotify.cleaned(freed: freed, lang: copyLang)
         }
+        CamLog.line("clean done \(scope.rawValue) jobs=\(jobs.count) freed=\(freed) failed=\(failed) blocked=\(blockedApps.sorted().joined(separator: ","))")
         withAnimation(Motion.easeMicro) {
             items.removeAll { $0.bytes <= 0 }
         }
+        refreshSessionBlocks()
     }
 }
 

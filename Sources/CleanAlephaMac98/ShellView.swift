@@ -10,6 +10,7 @@ struct ShellView: View {
         switch state.module {
         case .space: "space"
         case .tools: "tools"
+        case .uninstaller: "uninstaller"
         default: "scan"
         }
     }
@@ -30,6 +31,7 @@ struct ShellView: View {
                     switch state.module {
                     case .space: SpaceView()
                     case .tools: ToolsView()
+                    case .uninstaller: UninstallerView()
                     default: ScanView()
                     }
                 }
@@ -58,6 +60,8 @@ struct ShellView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             state.refreshFDA()
+            // The user may have just quit Chrome/Telegram to let their caches go.
+            state.refreshSessionBlocks()
         }
         .onReceive(NotificationCenter.default.publisher(for: .cam98Scan)) { _ in
             if state.hasScannedCurrent() && state.scanFinished && !state.isBusy {
@@ -147,7 +151,7 @@ private struct ShortcutsSheet: View {
         }
         .padding(S.xxl)
         .frame(width: 420)
-        .background(C.bgTop)
+        .background(ShellAtmosphere(richCare: false, family: .system))
         .preferredColorScheme(state.appearance.colorScheme)
     }
 }
@@ -184,10 +188,10 @@ struct SidebarView: View {
     private var groups: [(String, [Module])] {
         [
             (Copy.scanGroup.t(lang), [.smart]),
-            (Copy.cleanGroup.t(lang), [.junk, .mail, .trash, .leftovers, .large, .duplicates, .browsers, .dev, .messengers, .privacy]),
+            (Copy.cleanGroup.t(lang), [.junk, .mail, .trash, .leftovers, .large, .duplicates, .deepSearch, .browsers, .dev, .messengers, .privacy]),
             (Copy.liveGroup.t(lang), [.pulse, .startup]),
             (Copy.guardGroup.t(lang), [.protect]),
-            (Copy.systemGroup.t(lang), [.space, .tools])
+            (Copy.systemGroup.t(lang), [.space, .tools, .uninstaller])
         ]
     }
 
@@ -302,10 +306,7 @@ private struct SidebarThemeBar: View {
     }
 
     private var barFill: Color {
-        if scheme == .dark {
-            return Color.white.opacity(0.10)
-        }
-        return Color.white.opacity(0.94)
+        scheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.28)
     }
 
     var body: some View {
@@ -348,10 +349,25 @@ private struct SidebarThemeBar: View {
                 .padding(3)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(barFill)
+                        .fill(.ultraThinMaterial)
                         .overlay(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(C.hairline.opacity(scheme == .dark ? 0.45 : 0.75), lineWidth: 1)
+                                .fill(barFill)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(
+                                    LinearGradient(
+                                        colors: [
+                                            Color.white.opacity(scheme == .dark ? 0.28 : 0.78),
+                                            C.action.opacity(0.20),
+                                            C.hairline.opacity(0.36)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                    lineWidth: 1
+                                )
                         )
                 )
             }
@@ -414,7 +430,15 @@ private struct FdaSidebarCard: View {
             .padding(S.sm)
             .background(
                 RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                    .fill(C.warn.opacity(hover ? 0.14 : 0.08))
+                    .fill(.thinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                            .fill(C.warn.opacity(hover ? 0.14 : 0.07))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                            .stroke(C.warn.opacity(hover ? 0.34 : 0.20), lineWidth: 1)
+                    )
             )
             .focusStroke(radius: S.buttonRadius)
         }
@@ -453,22 +477,6 @@ private struct SidebarRow: View {
     }
 
     private var hintInk: Color { careChrome ? C.careMuted : C.secondary }
-    private var iconInk: Color {
-        if careChrome { return selected ? C.careInk : C.careSecondary }
-        return selected ? C.accentText : C.secondary
-    }
-
-    /// Light Smart Care: dark translucent chips; night: white frost.
-    private var chipFill: Color {
-        if !careChrome {
-            return selected ? C.action.opacity(0.18) : C.iconWell.opacity(hover ? 1.15 : 1)
-        }
-        if scheme == .light {
-            return selected ? C.careInk.opacity(0.12) : C.careInk.opacity(hover ? 0.08 : 0.05)
-        }
-        return selected ? Color.white.opacity(0.22) : Color.white.opacity(hover ? 0.14 : 0.08)
-    }
-
     private var rowFill: Color {
         if !careChrome {
             return selected ? C.pill : (hover ? C.pillHover : Color.clear)
@@ -482,13 +490,14 @@ private struct SidebarRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: S.iconSquircle, style: .continuous)
-                        .fill(chipFill)
-                    CamIcon(glyph: Glyph(module: module), size: 15)
-                        .foregroundStyle(iconInk)
-                }
-                .frame(width: 26, height: 26)
+                GlassIconWell(
+                    glyph: Glyph(module: module),
+                    family: CareFamily.of(module),
+                    selected: selected,
+                    muted: !enabled,
+                    size: 26,
+                    glyphSize: 15
+                )
                 Text(module.name.t(lang))
                     .font(F.body())
                     .foregroundStyle(labelInk)
@@ -514,6 +523,8 @@ private struct SidebarRow: View {
             .focusStroke(radius: 10)
         }
         .buttonStyle(.plain)
+        .modifier(CommandShortcut(module: module))
+        .actsOnFirstClick()
         .disabled(!enabled)
         .opacity(enabled ? 1 : (selected ? 0.72 : 0.45))
         .help(module.shortcutHint.isEmpty ? module.name.t(lang) : "\(module.name.t(lang)) · \(module.shortcutHint)")
@@ -536,6 +547,7 @@ extension Module {
         case .leftovers: "5"
         case .large: "6"
         case .duplicates: "d"
+        case .deepSearch: "f"
         case .browsers: "7"
         case .dev: "8"
         case .messengers: "9"
@@ -545,6 +557,7 @@ extension Module {
         case .pulse: "b"
         case .protect: "k"
         case .startup: "l"
+        case .uninstaller: "u"
         }
     }
 
@@ -557,6 +570,7 @@ extension Module {
         case .leftovers: "⌘5"
         case .large: "⌘6"
         case .duplicates: "⌘D"
+        case .deepSearch: "⌘F"
         case .browsers: "⌘7"
         case .dev: "⌘8"
         case .messengers: "⌘9"
@@ -566,6 +580,7 @@ extension Module {
         case .pulse: "⌘B"
         case .protect: "⌘K"
         case .startup: "⌘L"
+        case .uninstaller: "⌘U"
         }
     }
 }

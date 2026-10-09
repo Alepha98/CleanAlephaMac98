@@ -3,13 +3,17 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// A throwaway directory tree under the system temp dir, cleaned up on `tearDown()`.
+/// A throwaway directory tree, cleaned up on `tearDown()`. It lives under `~/Library/Caches`, not
+/// the system temp dir: `/private/var/folders` and `/private/tmp` are Keep system roots the cleaner
+/// must never write to, so fixtures there would (correctly) be invisible to every scanner.
 final class FixtureTree {
+    static let base: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("CleanAlephaMac98Tests", isDirectory: true)
+
     let root: URL
 
     init() {
-        root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cam98-tests-\(UUID().uuidString)", isDirectory: true)
+        root = Self.base.appendingPathComponent("cam98-tests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
 

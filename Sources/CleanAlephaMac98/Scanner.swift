@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 struct StageChunk: Sendable {
@@ -17,8 +18,12 @@ enum Scanner {
 
     /// Chromium-family cache folders inside a profile — never Cookies / Login Data.
     private static let profileCacheNames: [String] = [
-        "Cache", "Code Cache", "GPUCache", "Service Worker", "DawnCache", "ShaderCache", "GrShaderCache"
+        "Cache", "Code Cache", "GPUCache", "DawnCache", "ShaderCache", "GrShaderCache"
     ]
+
+    /// Never wipe the complete Service Worker directory: its registration database is
+    /// session-adjacent. Only these two reproducible payload caches are safe targets.
+    private static let serviceWorkerCacheNames: [String] = ["CacheStorage", "ScriptCache"]
 
     /// Apple caches we refuse to wipe (CloudKit / Music / etc.).
     private static let appleCacheDeny: Set<String> = [
@@ -71,9 +76,15 @@ enum Scanner {
 
     enum ScanStage: Int, CaseIterable, Sendable {
         case junk, mail, trash, leftovers, large, duplicates, browsers, dev, messengers, privacy
-        func items() -> [JunkItem] {
+        /// node_modules / .venv / Pods inside project folders — the heavy half of Developer.
+        case projects
+        /// Forensic hunts (hidden captures, remnants, AI storage, hidden trees…) — minutes of work, so
+        /// they live in their own on-demand layer instead of inside Junk on every Smart scan.
+        case deepSearch
+
+        func items(cancellation: ScanCancellation? = nil) -> [JunkItem] {
             switch self {
-            case .junk: Scanner.junk()
+            case .junk: Scanner.junk(cancellation: cancellation)
             case .mail: Scanner.mail()
             case .trash: Scanner.trash()
             case .leftovers: Scanner.leftovers().items
@@ -83,6 +94,8 @@ enum Scanner {
             case .dev: Scanner.dev()
             case .messengers: Scanner.messengers()
             case .privacy: DeepScan.privacyItems()
+            case .projects: Scanner.projectArtifacts()
+            case .deepSearch: Scanner.deepSearch(cancellation: cancellation)
             }
         }
 
@@ -95,22 +108,39 @@ enum Scanner {
             case .large: .large
             case .duplicates: .duplicates
             case .browsers: .browsers
-            case .dev: .dev
+            case .dev, .projects: .dev
             case .messengers: .messengers
             case .privacy: .privacy
+            case .deepSearch: .deepSearch
+            }
+        }
+
+        /// Heavy stages that walk / hash / decode tens of GB and only produce off-by-default "review"
+        /// cards. Smart skips them so it stays fast and its one-click clean stays safe; they run when
+        /// their layer is opened. (Measured: these were ~150s of a 163s Smart scan.)
+        var isDeep: Bool {
+            switch self {
+            case .large, .duplicates, .projects, .deepSearch: true
+            default: false
             }
         }
 
         static func stages(for module: Module) -> [ScanStage] {
-            if module == .smart { return Array(allCases) }
+            if module == .smart { return allCases.filter { !$0.isDeep } }
             return allCases.filter { $0.module == module }
         }
     }
 
     /// Isolates a stage so one bad folder does not abort the whole scan.
-    static func safeItems(for stage: ScanStage) -> StageChunk {
+    static func safeItems(
+        for stage: ScanStage,
+        cancellation: ScanCancellation? = nil
+    ) -> StageChunk {
         ScanThrottle.beginWorker()
         return autoreleasepool {
+            guard cancellation?.isCancelled != true else {
+                return StageChunk(items: [], failed: false)
+            }
             var failed = false
             let raw: [JunkItem]
             switch stage {
@@ -129,21 +159,35 @@ enum Scanner {
             case .trash:
                 raw = trash()
             default:
-                raw = stage.items()
+                raw = stage.items(cancellation: cancellation)
+            }
+            guard cancellation?.isCancelled != true else {
+                return StageChunk(items: [], failed: false)
             }
             ScanThrottle.reliefIfNeeded()
-            // Trash: any non-empty bin counts (even small). Others keep the 16KB floor.
-            let minBytes: Int64 = stage == .trash ? 1 : 16_384
             return StageChunk(
-                items: raw.filter { item in
-                    guard item.bytes > minBytes else { return false }
-                    if Keep.isDismissed(item.id) { return false }
-                    if Keep.allowsExplicitCard(item) { return true }
-                    return !Keep.isProtected(item.url)
-                },
+                items: raw.filter { shouldInclude($0, in: stage) },
                 failed: failed
             )
         }
+    }
+
+    private static func shouldInclude(_ item: JunkItem, in stage: ScanStage) -> Bool {
+        // Trash: any non-empty bin counts (even small). Large sparse files and APFS
+        // clones stay visible even when deleting one path reclaims little or no space.
+        let minBytes: Int64 = stage == .trash ? 1 : 16_384
+        // Permission/audit cards intentionally have an unknown (zero) size. Dropping
+        // them would turn "macOS denied access" into a misleading "nothing found".
+        guard item.kind == .advice || stage == .large || stage == .duplicates
+                || item.bytes > minBytes else { return false }
+        if Keep.isDismissed(item.id) { return false }
+        if Keep.isExtraProtected(item.url) { return false }
+        if Keep.allowsExplicitCard(item) { return true }
+        return !Keep.isProtected(item.url)
+    }
+
+    static func shouldIncludeForQA(_ item: JunkItem, in stage: ScanStage) -> Bool {
+        shouldInclude(item, in: stage)
     }
 
     private static func item(
@@ -164,10 +208,17 @@ enum Scanner {
         url: URL,
         selected: Bool = true,
         kind: CleanKind = .wipeChildren,
-        keeps: Bool = false
+        keeps: Bool = false,
+        measureTimeout: TimeInterval? = nil
     ) -> JunkItem? {
         if Keep.isProtected(url) { return nil }
-        let b = DiskSizer.bytes(at: url)
+        let b: Int64
+        if let measureTimeout {
+            guard let measured = DiskSizer.boundedBytes(at: url, timeout: measureTimeout) else { return nil }
+            b = measured
+        } else {
+            b = DiskSizer.bytes(at: url)
+        }
         guard b >= minCacheBytes else { return nil }
         return JunkItem(
             id: id,
@@ -182,12 +233,21 @@ enum Scanner {
         )
     }
 
-    static func junk() -> [JunkItem] {
+    static func junk(cancellation: ScanCancellation? = nil) -> [JunkItem] {
         var rows: [JunkItem] = []
+        func appendPhase(_ label: String, _ work: () -> [JunkItem]) -> Bool {
+            guard cancellation?.isCancelled != true else { return false }
+            rows.append(contentsOf: measured(label, work))
+            return cancellation?.isCancelled != true
+        }
+        func cancelled() -> [JunkItem] {
+            CamLog.line("junk cancelled items=\(rows.count)")
+            return []
+        }
         let fixed: [(String, Line, String, Line)] = [
             ("logs", Line(ru: "Логи пользователя", en: "User logs"), "Library/Logs", Line(ru: "Диагностика, крэши, болтливые агенты", en: "Diagnostics, crashes, chatty agents")),
             ("crash", Line(ru: "Отчёты о падениях", en: "Crash reports"), "Library/Application Support/CrashReporter", Line(ru: "Старые CrashReporter", en: "Old CrashReporter files")),
-            ("state", Line(ru: "Снимки окон", en: "Window snapshots"), "Library/Saved Application State", Line(ru: "Пересоздаются при открытии", en: "Recreated when you reopen")),
+            ("state", Line(ru: "Снимки окон", en: "Window snapshots"), "Library/Saved Application State", Line(ru: "Пересоздаются при открытии. По умолчанию выкл.", en: "Recreated when you reopen. Off by default.")),
             ("capcut", Line(ru: "Кэш CapCut", en: "CapCut cache"), "Movies/CapCut/User Data/Cache", Line(ru: "Проекты целы", en: "Projects stay")),
             ("claude-ui", Line(ru: "Кэш Claude UI", en: "Claude UI cache"), "Library/Application Support/Claude/Cache", Line(ru: "Не VM", en: "Not the VM")),
             ("claude-code", Line(ru: "Кэш Claude Code", en: "Claude Code cache"), "Library/Application Support/Claude/Code Cache", Line(ru: "Не VM", en: "Not the VM")),
@@ -204,17 +264,64 @@ enum Scanner {
             ("opencode-cache", Line(ru: "Кэш OpenCode", en: "OpenCode cache"), "Library/Application Support/ai.opencode.desktop/Cache", Line(ru: "Кэш приложения", en: "App cache")),
             ("cloudkit-cache", Line(ru: "Кэш CloudKit", en: "CloudKit cache"), "Library/Caches/CloudKit", Line(ru: "Пересоберётся. По умолчанию выкл.", en: "Rebuilds. Off by default."))
         ]
-        rows.append(contentsOf: fixed.compactMap { entry in
-            let selected = entry.0 != "cloudkit-cache"
+        guard appendPhase("junk fixed", { fixed.compactMap { entry in
+            let selected = entry.0 != "cloudkit-cache" && entry.0 != "state"
             return item(entry.0, .junk, entry.1, entry.3, entry.2, selected: selected)
-        })
-        rows.append(contentsOf: enumeratedUserCaches())
-        rows.append(contentsOf: enumeratedDotCache())
-        rows.append(contentsOf: enumeratedContainerCaches())
-        rows.append(contentsOf: enumeratedAppSupportCaches())
-        rows.append(contentsOf: DeepScan.junkExtras())
-        rows.append(contentsOf: oldInstallers())
+        } }) else { return cancelled() }
+        guard appendPhase("junk user-caches", { enumeratedUserCaches() }) else { return cancelled() }
+        guard appendPhase("junk dot-cache", { enumeratedDotCache() }) else { return cancelled() }
+        guard appendPhase("junk containers", { enumeratedContainerCaches() }) else { return cancelled() }
+        guard appendPhase("junk app-support", { enumeratedAppSupportCaches() }) else { return cancelled() }
+        guard appendPhase("junk deep", { DeepScan.junkExtras() }) else { return cancelled() }
+        guard appendPhase("junk artifacts", { ArtifactScanner.items() }) else { return cancelled() }
+        guard appendPhase("junk installers", { oldInstallers() }) else { return cancelled() }
+        guard appendPhase("junk ios-backups", { oldIOSBackups() }) else { return cancelled() }
         return dedupeByURL(rows).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
+    }
+
+    /// The forensic hunts that used to run inside Junk on every Smart scan (~8 minutes on a full Mac,
+    /// ai-storage alone ~4): hidden captures, forensic remnants, screenshot provenance, deep media,
+    /// the system-deep audit, AI storage, hidden trees, storage intelligence. Same phases, order,
+    /// cancellation and timing logs as before — they just run when the Deep search layer is opened,
+    /// and their cards are re-homed to that layer.
+    static func deepSearch(cancellation: ScanCancellation? = nil) -> [JunkItem] {
+        var rows: [JunkItem] = []
+        func appendPhase(_ label: String, _ work: () -> [JunkItem]) -> Bool {
+            guard cancellation?.isCancelled != true else { return false }
+            rows.append(contentsOf: measured(label, work))
+            return cancellation?.isCancelled != true
+        }
+        guard appendPhase("deep hidden-captures", { HiddenCaptureScanner.items() }),
+              appendPhase("deep forensic-remnants", { ForensicRemnantScanner.items() }),
+              appendPhase("deep screenshot-provenance", { ScreenshotProvenanceScanner.items() }),
+              appendPhase("deep deep-media-forensics", { DeepMediaForensicsScanner.items(cancellation: cancellation) }),
+              appendPhase("deep system-deep", { SystemDeepScanner.items(cancellation: cancellation) }),
+              appendPhase("deep ai-storage", { AIStorageScanner.items(cancellation: cancellation) }),
+              appendPhase("deep hidden-trees", { HiddenTreeScanner.items(cancellation: cancellation) }),
+              appendPhase("deep intelligence", { StorageIntelligenceScanner.items(cancellation: cancellation) })
+        else {
+            CamLog.line("deep search cancelled items=\(rows.count)")
+            return []
+        }
+        return dedupeByURL(rows)
+            .filter { !Keep.isDismissed($0.id) }
+            .map { rehome($0, to: .deepSearch) }
+            .sorted { $0.bytes > $1.bytes }
+    }
+
+    /// Same card, shown in another layer — every other field (id, size, selection, kind) unchanged.
+    static func rehome(_ item: JunkItem, to module: Module) -> JunkItem {
+        JunkItem(
+            id: item.id, module: module, title: item.title, subtitle: item.subtitle, url: item.url,
+            bytes: item.bytes, selected: item.selected, kind: item.kind, keepsLogins: item.keepsLogins
+        )
+    }
+
+    private static func measured(_ label: String, _ work: () -> [JunkItem]) -> [JunkItem] {
+        let started = Date()
+        let rows = work()
+        CamLog.line("\(label) items=\(rows.count) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+        return rows
     }
 
     /// Walk ~/Library/Containers/*/Data/Library/Caches — big gap vs CleanMyMac-style finds.
@@ -226,7 +333,7 @@ enum Scanner {
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         ) else { return [] }
-        var out: [JunkItem] = []
+        var candidates: [(id: String, url: URL)] = []
         var n = 0
         for container in kids {
             ScanThrottle.tickSync(every: 20, counter: &n)
@@ -236,18 +343,24 @@ enum Scanner {
             if id.lowercased().contains("icloud") { continue }
             let cache = container.appendingPathComponent("Data/Library/Caches")
             if Keep.isProtected(cache) { continue }
-            guard let item = folderItem(
-                id: "ccache-\(id)",
-                module: .junk,
-                title: Line(ru: "Кэш \(shortBundle(id))", en: "Cache \(shortBundle(id))"),
-                subtitle: Line(ru: "Container cache", en: "Container cache"),
-                url: cache,
-                selected: !id.hasPrefix("com.apple."),
-                kind: .wipeChildren
-            ) else { continue }
-            out.append(item)
+            candidates.append((id, cache))
         }
-        return out
+        let sizes = DiskSizer.batchBytes(at: candidates.map(\.url), timeout: 7)
+        return candidates.compactMap { candidate in
+            let bytes = sizes[candidate.url.standardizedFileURL.path] ?? 0
+            guard bytes >= minCacheBytes else { return nil }
+            return JunkItem(
+                id: "ccache-\(candidate.id)",
+                module: .junk,
+                title: Line(ru: "Кэш \(shortBundle(candidate.id))", en: "Cache \(shortBundle(candidate.id))"),
+                subtitle: Line(ru: "Container cache", en: "Container cache"),
+                url: candidate.url,
+                bytes: bytes,
+                selected: !candidate.id.hasPrefix("com.apple."),
+                kind: .wipeChildren,
+                keepsLogins: false
+            )
+        }
     }
 
     private static func shortBundle(_ id: String) -> String {
@@ -281,7 +394,8 @@ enum Scanner {
                     title: Line(ru: "\(appName) · \(leaf)", en: "\(appName) · \(leaf)"),
                     subtitle: Line(ru: "Application Support", en: "Application Support"),
                     url: url,
-                    selected: true
+                    selected: true,
+                    measureTimeout: 1.2
                 ) else { continue }
                 out.append(item)
             }
@@ -326,6 +440,62 @@ enum Scanner {
         return out.sorted { $0.bytes > $1.bytes }
     }
 
+    /// Finder-managed local device backups can occupy tens of gigabytes. Expose only
+    /// complete, stale backup folders; never individual blobs that would corrupt a backup.
+    /// They remain opt-in and outside the safe preset.
+    private static func oldIOSBackups(now: Date = Date()) -> [JunkItem] {
+        let root = home().appendingPathComponent("Library/Application Support/MobileSync/Backup")
+        let fm = FileManager.default
+        guard let children = try? fm.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var candidates: [(url: URL, device: String, date: Date)] = []
+        for url in children {
+            guard let values = try? url.resourceValues(forKeys: [
+                .isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey
+            ]), values.isDirectory == true, values.isSymbolicLink != true else { continue }
+            let info = backupInfo(at: url)
+            let date = info.date ?? values.contentModificationDate ?? .distantPast
+            guard now.timeIntervalSince(date) >= 30 * 86_400 else { continue }
+            candidates.append((url, info.device ?? "iPhone / iPad", date))
+        }
+
+        let sizes = DiskSizer.batchBytes(at: candidates.map(\.url), timeout: 18)
+        return candidates.compactMap { candidate in
+            let path = candidate.url.standardizedFileURL.path
+            let bytes = sizes[path] ?? 0
+            guard bytes >= 100_000_000 else { return nil }
+            let ageDays = max(0, Int(now.timeIntervalSince(candidate.date) / 86_400))
+            return JunkItem(
+                id: "ios-backup-\(candidate.url.lastPathComponent)",
+                module: .junk,
+                title: Line(ru: "Бэкап · \(candidate.device)", en: "Backup · \(candidate.device)"),
+                subtitle: Line(
+                    ru: "Локальная копия целиком · \(ageDays) дн. · выкл.",
+                    en: "Complete local backup · \(ageDays)d · off"
+                ),
+                url: candidate.url,
+                bytes: bytes,
+                selected: false,
+                kind: .deleteItem,
+                keepsLogins: false
+            )
+        }.sorted { $0.bytes > $1.bytes }
+    }
+
+    private static func backupInfo(at backup: URL) -> (device: String?, date: Date?) {
+        let plist = backup.appendingPathComponent("Info.plist")
+        guard let data = try? Data(contentsOf: plist),
+              let raw = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              let info = raw as? [String: Any] else { return (nil, nil) }
+        let device = (info["Device Name"] as? String) ?? (info["Display Name"] as? String)
+        let date = (info["Last Backup Date"] as? Date) ?? (info["Date"] as? Date)
+        return (device, date)
+    }
+
     /// Walk ~/Library/Caches — one card per folder ≥ 8 MB.
     private static func enumeratedUserCaches() -> [JunkItem] {
         let root = home().appendingPathComponent("Library/Caches")
@@ -350,7 +520,8 @@ enum Scanner {
                 title: Line(ru: "Кэш \(name)", en: "Cache \(name)"),
                 subtitle: Line(ru: "Library/Caches", en: "Library/Caches"),
                 url: url,
-                selected: true
+                selected: true,
+                measureTimeout: 1.2
             ) else { continue }
             out.append(item)
         }
@@ -405,6 +576,21 @@ enum Scanner {
             out.append(item)
         }
 
+        // CloudDocs keeps a second hidden trash outside ~/.Trash. Finder exposes it only
+        // with hidden files enabled, so classic cleaners commonly miss it entirely.
+        let cloudTrash = home().appendingPathComponent("Library/Mobile Documents/.Trash")
+        if let item = trashBin(
+            id: "trash-icloud",
+            title: Line(ru: "Скрытая корзина iCloud Drive", en: "Hidden iCloud Drive Trash"),
+            subtitle: Line(
+                ru: "Отдельно от обычной Корзины · удаление только вручную",
+                en: "Separate from normal Trash · manual opt-in only"
+            ),
+            url: cloudTrash
+        ) {
+            out.append(item)
+        }
+
         let uid = String(getuid())
         let vols = (try? FileManager.default.contentsOfDirectory(
             at: URL(fileURLWithPath: "/Volumes"),
@@ -432,11 +618,28 @@ enum Scanner {
         let fm = FileManager.default
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { return nil }
-        let kids = (try? fm.contentsOfDirectory(
+        guard let kids = try? fm.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: nil,
             options: []
-        )) ?? []
+        ) else {
+            // A TCC-denied Trash must never be reported as empty. The advice card cannot
+            // be selected or passed to Janitor; it only tells the user why the scan is partial.
+            return JunkItem(
+                id: "\(id)-denied",
+                module: .trash,
+                title: title,
+                subtitle: Line(
+                    ru: "macOS запретила чтение · размер неизвестен · нужен Полный доступ к диску",
+                    en: "macOS denied reading · size unknown · Full Disk Access required"
+                ),
+                url: url,
+                bytes: 0,
+                selected: false,
+                kind: .advice,
+                keepsLogins: true
+            )
+        }
         let visible = kids.filter { $0.lastPathComponent != ".DS_Store" }
         guard !visible.isEmpty else { return nil }
         var bytes = DiskSizer.trashBytes(at: url)
@@ -457,22 +660,236 @@ enum Scanner {
         )
     }
 
-    /// Byte-identical duplicates (full SHA-256 via `DuplicateFinder`) plus visually-similar image
-    /// copies (perceptual dHash via `SimilarImageFinder`), across Desktop / Documents / Downloads.
+    /// Env-guarded profiling mark (CAM98_PROF=1) — splits a composite stage's internal cost.
+    @inline(__always) private static func profMark(_ label: String, _ start: Date) {
+        guard ProcessInfo.processInfo.environment["CAM98_PROF"] != nil else { return }
+        FileHandle.standardError.write(Data("prof \(label) \(Int(Date().timeIntervalSince(start) * 1000))ms\n".utf8))
+    }
+
+    /// Unambiguous dependency / build-tool folders (not generic names like "build") that the
+    /// duplicate walk never descends into.
+    private static let dependencyDirs: Set<String> = [
+        "node_modules", "bower_components", "Pods", "Carthage", "venv", "__pycache__", "DerivedData"
+    ]
+
+    private struct DuplicateCandidate {
+        let url: URL
+        let facts: FileStorageFacts
+        let modified: Date
+    }
+
+    /// Duplicate files in the main user-document roots. The full hash proves equal
+    /// content; inode and APFS content ids prevent fake reclaim estimates for links/clones.
     private static func duplicates() -> Gathered {
         let roots = [
             home().appendingPathComponent("Desktop"),
             home().appendingPathComponent("Documents"),
-            home().appendingPathComponent("Downloads")
+            home().appendingPathComponent("Downloads"),
+            home().appendingPathComponent("Pictures"),
+            home().appendingPathComponent("Movies")
         ]
-        var gathered = DuplicateFinder.find(in: roots)
-        // A file already flagged as an exact duplicate must not also appear as a "similar" card.
-        let exactPaths = Set(gathered.items.map { $0.url.standardizedFileURL.path })
-        let similar = SimilarImageFinder.find(in: roots)
-            .filter { !exactPaths.contains($0.url.standardizedFileURL.path) }
-        gathered.items.append(contentsOf: similar)
-        gathered.items.sort { $0.bytes > $1.bytes }
+        let folderCards = DuplicateFolderScanner.items(in: roots)
+        var gathered = duplicates(in: roots, minimumLogicalBytes: 1_048_576)
+        // One whole-folder result is easier to understand than dozens of child-file rows.
+        // Suppress only children of a proven, removable duplicate tree; APFS/hard-link
+        // audit cards do not hide independently useful file findings.
+        let coveredFolders = folderCards
+            .filter { $0.kind == .deleteItem }
+            .map { $0.url.standardizedFileURL.resolvingSymlinksInPath().path + "/" }
+        gathered.items.removeAll { item in
+            let path = item.url.standardizedFileURL.resolvingSymlinksInPath().path
+            return coveredFolders.contains(where: { path.hasPrefix($0) })
+        }
+        gathered.items.append(contentsOf: folderCards)
+        gathered.items.append(contentsOf: SimilarCaptureScanner.items())
+        gathered.items = dedupeByURL(gathered.items).sorted { lhs, rhs in
+            if lhs.kind == .advice, rhs.kind != .advice { return false }
+            if lhs.kind != .advice, rhs.kind == .advice { return true }
+            return lhs.bytes > rhs.bytes
+        }
+        ContentFingerprinter.flush()
         return gathered
+    }
+
+    private static func duplicates(
+        in roots: [URL],
+        minimumLogicalBytes minFile: Int64
+    ) -> Gathered {
+        let fm = FileManager.default
+        var bySize: [Int64: [DuplicateCandidate]] = [:]
+        var failed = false
+        for root in roots {
+            guard let en = fm.enumerator(
+                at: root,
+                includingPropertiesForKeys: Array(FileStorageFacts.resourceKeys)
+                    + [.contentModificationDateKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else {
+                if fm.fileExists(atPath: root.path) { failed = true }
+                continue
+            }
+            var n = 0
+            // Time budget per root instead of a 40k entry count: the count silently truncated a
+            // packed Documents/Downloads before reaching most of it. The huge count is a backstop.
+            let deadline = Date().addingTimeInterval(8)
+            for case let url as URL in en {
+                n += 1
+                if n & 0x3FF == 0, Date() > deadline { break }
+                if n > 3_000_000 { break }
+                // Dependency / build-tool trees: huge file counts, never the duplicates people mean.
+                if Self.dependencyDirs.contains(url.lastPathComponent) {
+                    en.skipDescendants()
+                    continue
+                }
+                if Keep.isProtected(url) {
+                    en.skipDescendants()
+                    continue
+                }
+                guard let facts = FileStorageFacts.read(url),
+                      !facts.isCloudPlaceholder,
+                      facts.logicalBytes >= minFile else { continue }
+                let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast
+                bySize[facts.logicalBytes, default: []].append(
+                    DuplicateCandidate(url: url, facts: facts, modified: modified)
+                )
+            }
+        }
+
+        var items: [JunkItem] = []
+        var group = 0
+        for size in bySize.keys.sorted(by: >) {
+            guard let candidates = bySize[size], candidates.count > 1 else { continue }
+            // Size -> three samples -> full SHA-256. Full reads are reserved for files
+            // whose beginning, middle, and end all match.
+            var sampleBuckets: [String: [DuplicateCandidate]] = [:]
+            for candidate in candidates {
+                let sig = sampleContentSignature(candidate.url, size: size)
+                sampleBuckets[sig, default: []].append(candidate)
+            }
+            var exactBuckets: [String: [DuplicateCandidate]] = [:]
+            for sampled in sampleBuckets.values where sampled.count > 1 {
+                for candidate in sampled {
+                    let sig = contentSignature(candidate.url, size: size)
+                    exactBuckets[sig, default: []].append(candidate)
+                }
+            }
+            for (_, twins) in exactBuckets where twins.count > 1 {
+                // Prefer a stable Documents/Desktop copy over a downloaded one, then the
+                // oldest shallow path. Nothing is preselected: the final choice is human.
+                let sorted = twins.sorted(by: duplicateKeeperOrder)
+                let keeper = sorted[0]
+                let contentPopulations = Dictionary(
+                    grouping: sorted.compactMap { candidate -> (Int64, FileStorageFacts.InodeKey)? in
+                        guard let id = candidate.facts.contentIdentifier,
+                              candidate.facts.mayShareFileContent else { return nil }
+                        return (id, candidate.facts.inodeKey)
+                    },
+                    by: { $0.0 }
+                ).mapValues { Set($0.map { $0.1 }).count }
+
+                for (i, candidate) in sorted.enumerated() where i > 0 {
+                    group += 1
+                    let url = candidate.url
+                    let name = url.lastPathComponent
+                    let sameInodeAsKeeper = candidate.facts.inodeKey == keeper.facts.inodeKey
+                    let clonePopulation = candidate.facts.contentIdentifier
+                        .flatMap { contentPopulations[$0] } ?? 1
+                    // mayShare=true means this content stream participates in APFS
+                    // cloning even when its sibling is outside our user-folder roots.
+                    let isFullClone = candidate.facts.mayShareFileContent
+                        && candidate.facts.contentIdentifier != nil
+                    let reclaimable = candidate.facts.conservativeReclaimableBytes(
+                        contentIdentifierPopulation: clonePopulation
+                    )
+                    let idPrefix = sameInodeAsKeeper || candidate.facts.isHardLinked
+                        ? "dup-hardlink-"
+                        : (isFullClone ? "dup-clone-" : "dup-")
+                    let kind: CleanKind = idPrefix == "dup-hardlink-" || isFullClone
+                        ? .advice
+                        : .deleteItem
+                    let subtitle: Line
+                    if idPrefix == "dup-hardlink-" {
+                        subtitle = Line(
+                            ru: "Не вторая копия, а ещё одно имя того же файла · освобождение 0 Б · оставляем без удаления",
+                            en: "Another name for the same file, not a second copy · frees 0 B · left untouched"
+                        )
+                    } else if isFullClone {
+                        subtitle = Line(
+                            ru: "Точный APFS-клон · оставить: \(PathFormat.tilde(keeper.url)) · удаление уберёт файл, но может освободить 0 Б",
+                            en: "Exact APFS clone · keep: \(PathFormat.tilde(keeper.url)) · removal deletes the file but may free 0 B"
+                        )
+                    } else {
+                        subtitle = Line(
+                            ru: "Точная копия · оставить: \(PathFormat.tilde(keeper.url)) · освободится около \(ByteFormat.string(reclaimable, .ru))",
+                            en: "Exact copy · keep: \(PathFormat.tilde(keeper.url)) · about \(ByteFormat.string(reclaimable, .en)) reclaimed"
+                        )
+                    }
+                    items.append(JunkItem(
+                        id: "\(idPrefix)\(group)-\(stablePathKey(url))",
+                        module: .duplicates,
+                        title: Line.proper(name),
+                        subtitle: subtitle,
+                        url: url,
+                        bytes: reclaimable,
+                        selected: false,
+                        kind: kind,
+                        keepsLogins: false
+                    ))
+                }
+            }
+            if items.count > 260 { break }
+        }
+        items.sort { $0.bytes > $1.bytes }
+        ContentFingerprinter.flush()
+        return Gathered(items: Array(items.prefix(240)), failed: failed)
+    }
+
+    static func duplicatesForQA(
+        roots: [URL],
+        minimumLogicalBytes: Int64 = 1
+    ) -> [JunkItem] {
+        duplicates(in: roots, minimumLogicalBytes: minimumLogicalBytes).items
+    }
+
+    private static func duplicateKeeperOrder(
+        _ lhs: DuplicateCandidate,
+        _ rhs: DuplicateCandidate
+    ) -> Bool {
+        func rank(_ url: URL) -> Int {
+            let path = url.standardizedFileURL.path
+            if path.contains("/Documents/") { return 0 }
+            if path.contains("/Desktop/") { return 1 }
+            if path.contains("/Downloads/") { return 3 }
+            return 2
+        }
+        let leftRank = rank(lhs.url)
+        let rightRank = rank(rhs.url)
+        if leftRank != rightRank { return leftRank < rightRank }
+        if lhs.url.pathComponents.count != rhs.url.pathComponents.count {
+            return lhs.url.pathComponents.count < rhs.url.pathComponents.count
+        }
+        if lhs.modified != rhs.modified { return lhs.modified < rhs.modified }
+        return lhs.url.path.localizedStandardCompare(rhs.url.path) == .orderedAscending
+    }
+
+    private static func stablePathKey(_ url: URL) -> String {
+        SHA256.hash(data: Data(url.standardizedFileURL.path.utf8))
+            .prefix(10)
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    /// Exact content fingerprint. Size pre-grouping keeps this affordable; hashing the full
+    /// file prevents same-size files with identical headers/footers from being misclassified.
+    static func contentSignature(_ url: URL, size: Int64) -> String {
+        ContentFingerprinter.fullSignature(url, expectedSize: size)
+            ?? "\(size):unreadable:\(url.standardizedFileURL.path)"
+    }
+
+    private static func sampleContentSignature(_ url: URL, size: Int64) -> String {
+        ContentFingerprinter.sampleSignature(url, expectedSize: size)
+            ?? "\(size):unreadable:\(url.standardizedFileURL.path)"
     }
 
     private static func leftovers() -> Gathered {
@@ -506,14 +923,24 @@ enum Scanner {
         return Gathered(items: filtered, failed: false)
     }
 
+    private struct LargeCandidate {
+        let url: URL
+        let facts: FileStorageFacts
+        let modified: Date
+    }
+
     private static func largeFiles() -> Gathered {
         let roots = [
-            "Downloads", "Desktop", "Movies", "Documents",
-            "Library/Application Support", "Library/Containers"
+            "Downloads", "Desktop", "Movies", "Documents", "Pictures", "Music"
         ].map { home().appendingPathComponent($0) }
-        var found: [JunkItem] = []
+        var candidates: [LargeCandidate] = []
         var failed = false
         let skip = Set(["Personal", "Education", "Work", "STEM", "Safari", "CloudDocs", "Photos"])
+        let sessionAdjacent = Set([
+            "Network", "Session Storage", "Sessions", "Local Storage", "LocalStorage",
+            "IndexedDB", "WebStorage", "Service Worker", "Accounts", "accounts",
+            "History", "History-journal", "postbox", "tdata", "user_data"
+        ])
         let cutoffOld = Date().addingTimeInterval(-90 * 24 * 3600)
         for root in roots {
             var isDir: ObjCBool = false
@@ -521,30 +948,59 @@ enum Scanner {
             guard exists else { continue }
             guard let en = FileManager.default.enumerator(
                 at: root,
-                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey],
+                includingPropertiesForKeys: Array(FileStorageFacts.resourceKeys)
+                    + [.contentModificationDateKey],
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             ) else {
                 if isDir.boolValue { failed = true }
                 continue
             }
-            var depthGuard = 0
+            var walked = 0
             let deepRoot = root.path.contains("/Library/")
-            let limit = deepRoot ? 8_000 : 14_000
+            // Bound the walk by TIME, not entry count. A count cap silently truncated real results on a
+            // packed disk (the enumerator hit the ceiling before reaching big files deeper in the tree).
+            // A wall-clock budget keeps latency bounded even on a pathological folder yet reads a fast,
+            // large disk to the end — one stat per entry is microseconds. The enumerator never follows
+            // symlinks (no loops), and the heavy trees below are still pruned. The huge count is only a
+            // last-ditch backstop, not the working limit.
+            let deadline = Date().addingTimeInterval(6)
             for case let url as URL in en {
-                depthGuard += 1
-                if depthGuard > limit { break }
+                walked += 1
+                if walked & 0x3FF == 0, Date() > deadline { break }
+                if walked > 3_000_000 { break }
                 if skip.contains(url.lastPathComponent) { en.skipDescendants(); continue }
+                if sessionAdjacent.contains(url.lastPathComponent) || Keep.names.contains(url.lastPathComponent) {
+                    en.skipDescendants()
+                    continue
+                }
                 if Keep.isProtected(url) { en.skipDescendants(); continue }
                 if ["node_modules", ".git", ".colima", "DerivedData", "CoreSimulator", "iOS DeviceSupport"].contains(url.lastPathComponent) {
                     en.skipDescendants()
                     continue
                 }
-                guard let rv = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]),
-                      rv.isRegularFile == true else { continue }
-                let sz = Int64(rv.fileSize ?? 0)
+                guard let facts = FileStorageFacts.read(url), !facts.isCloudPlaceholder else { continue }
+                let sz = facts.logicalBytes
                 let minSize: Int64 = deepRoot ? 120_000_000 : 50_000_000
                 guard sz >= minSize else { continue }
-                let modified = rv.contentModificationDate ?? .distantPast
+                let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast
+                candidates.append(LargeCandidate(url: url, facts: facts, modified: modified))
+            }
+        }
+
+        let contentPopulations = Dictionary(
+            grouping: candidates.compactMap { candidate -> (Int64, FileStorageFacts.InodeKey)? in
+                guard let id = candidate.facts.contentIdentifier,
+                      candidate.facts.mayShareFileContent else { return nil }
+                return (id, candidate.facts.inodeKey)
+            },
+            by: { $0.0 }
+        ).mapValues { Set($0.map { $0.1 }).count }
+
+        let found: [JunkItem] = candidates.map { candidate in
+                let url = candidate.url
+                let facts = candidate.facts
+                let modified = candidate.modified
                 let old = modified < cutoffOld
                 let ageDays = max(0, Int(Date().timeIntervalSince(modified) / 86_400))
                 let kindLabel: String = {
@@ -563,31 +1019,52 @@ enum Scanner {
                     default: return Copy.largeKindFile.t(.en)
                     }
                 }()
-                let sub = Line(
-                    ru: old
-                        ? "\(kindLabel) · \(ageDays) дн. · \(PathFormat.tilde(url.deletingLastPathComponent()))"
-                        : "\(kindLabel) · \(PathFormat.tilde(url.deletingLastPathComponent()))",
-                    en: old
-                        ? "\(kindLabelEn) · \(ageDays)d · \(PathFormat.tilde(url.deletingLastPathComponent()))"
-                        : "\(kindLabelEn) · \(PathFormat.tilde(url.deletingLastPathComponent()))"
+                let clonePopulation = facts.contentIdentifier.flatMap { contentPopulations[$0] } ?? 1
+                let reclaimable = facts.conservativeReclaimableBytes(
+                    contentIdentifierPopulation: clonePopulation
                 )
-                found.append(JunkItem(
-                    id: "large-\(StableID.of(url.standardizedFileURL.path))",
+                let storageRU: String
+                let storageEN: String
+                if facts.isHardLinked {
+                    storageRU = "hard link · удаление одного имени может освободить 0 Б"
+                    storageEN = "hard link · removing one name may reclaim 0 B"
+                } else if facts.mayShareFileContent && clonePopulation > 1 {
+                    storageRU = "APFS-клон · отдельная копия может занимать 0 Б"
+                    storageEN = "APFS clone · this separate copy may use 0 B"
+                } else if facts.isSparse || facts.allocatedBytes + 1_048_576 < facts.logicalBytes {
+                    storageRU = "на диске \(ByteFormat.string(facts.allocatedBytes, .ru)) из \(ByteFormat.string(facts.logicalBytes, .ru))"
+                    storageEN = "\(ByteFormat.string(facts.allocatedBytes, .en)) on disk of \(ByteFormat.string(facts.logicalBytes, .en)) logical"
+                } else {
+                    storageRU = "на диске \(ByteFormat.string(reclaimable, .ru))"
+                    storageEN = "\(ByteFormat.string(reclaimable, .en)) on disk"
+                }
+                let sub = Line(
+                    ru: (old
+                        ? "\(kindLabel) · \(ageDays) дн. · \(PathFormat.tilde(url.deletingLastPathComponent()))"
+                        : "\(kindLabel) · \(PathFormat.tilde(url.deletingLastPathComponent()))")
+                        + " · \(storageRU)",
+                    en: (old
+                        ? "\(kindLabelEn) · \(ageDays)d · \(PathFormat.tilde(url.deletingLastPathComponent()))"
+                        : "\(kindLabelEn) · \(PathFormat.tilde(url.deletingLastPathComponent()))")
+                        + " · \(storageEN)"
+                )
+                let isSharedStorage = facts.isHardLinked || facts.mayShareFileContent
+                return JunkItem(
+                    id: "\(isSharedStorage ? "large-shared-" : "large-")\(stablePathKey(url))",
                     module: .large,
                     title: Line.proper(url.lastPathComponent),
                     subtitle: sub,
                     url: url,
-                    bytes: sz,
+                    bytes: reclaimable,
                     selected: false,
-                    kind: .deleteItem,
+                    kind: isSharedStorage ? .advice : .deleteItem,
                     keepsLogins: false
-                ))
-            }
+                )
         }
         let items = found
             .filter { !Keep.isDismissed($0.id) }
             .sorted { $0.bytes > $1.bytes }
-        return Gathered(items: Array(items.prefix(120)), failed: failed)
+        return Gathered(items: Array(items.prefix(250)), failed: failed)
     }
 
     private static func browsers() -> [JunkItem] {
@@ -713,6 +1190,19 @@ enum Scanner {
                 ) else { continue }
                 out.append(item)
             }
+            for cacheName in serviceWorkerCacheNames {
+                let url = profile.appendingPathComponent("Service Worker/\(cacheName)")
+                guard let item = folderItem(
+                    id: "b-\(brand)-\(pname)-ServiceWorker-\(cacheName)",
+                    module: .browsers,
+                    title: Line(ru: "\(brand) – Service Worker · \(cacheName)", en: "\(brand) – Service Worker · \(cacheName)"),
+                    subtitle: Line(ru: "\(pname) · база сессий цела", en: "\(pname) · session database stays"),
+                    url: url,
+                    selected: true,
+                    keeps: true
+                ) else { continue }
+                out.append(item)
+            }
         }
         // Shared shader caches at Chrome root (not profile)
         for cacheName in ["ShaderCache", "GrShaderCache"] {
@@ -744,9 +1234,13 @@ enum Scanner {
 
         var out: [JunkItem] = []
         var seen = 0
+        // Time budget, not a count cap: an antidetect browser can hold hundreds of profiles, and the
+        // old 4k ceiling could stop before their cache folders were all seen.
+        let deadline = Date().addingTimeInterval(4)
         for case let url as URL in en {
             seen += 1
-            if seen > 4_000 { break }
+            if seen & 0x1FF == 0, Date() > deadline { break }
+            if seen > 2_000_000 { break }
             let name = url.lastPathComponent
             guard profileCacheNames.contains(name) else { continue }
             // Only shallow-ish cache dirs (avoid walking into every blob inside)
@@ -774,8 +1268,24 @@ enum Scanner {
             item("swiftpm", .dev, Line.proper("SwiftPM cache"), Line.proper("org.swift.swiftpm"), "Library/Caches/org.swift.swiftpm"),
             item("pnpm", .dev, Line.proper("pnpm cache"), Line.proper("Library/Caches/pnpm"), "Library/Caches/pnpm")
         ].compactMap { $0 }
+        let td = Date()
         rows.append(contentsOf: DeepScan.devExtras())
-        rows.append(contentsOf: ProjectArtifactFinder.find(in: ProjectArtifactFinder.defaultRoots()))
+        profMark("dev.extras", td)
+        // Build output inside projects (build/, .next, target, __pycache__…) regenerates itself and is
+        // on by default — the biggest safe win on a dev machine, so it rides along with Smart.
+        let to = Date()
+        rows.append(contentsOf: ProjectArtifactFinder.find(in: ProjectArtifactFinder.defaultRoots(), scope: .outputs))
+        profMark("dev.outputs", to)
+        return dedupeByURL(rows).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
+    }
+
+    /// The deep half of Developer: dependency folders inside projects (node_modules / .venv / Pods).
+    /// Off by default (they need a reinstall) and the heaviest trees to size — sized only when the
+    /// Developer layer is opened.
+    private static func projectArtifacts() -> [JunkItem] {
+        let tp = Date()
+        let rows = ProjectArtifactFinder.find(in: ProjectArtifactFinder.defaultRoots(), scope: .dependencies)
+        profMark("dev.dependencies", tp)
         return dedupeByURL(rows).filter { !Keep.isDismissed($0.id) }.sorted { $0.bytes > $1.bytes }
     }
 
@@ -788,7 +1298,8 @@ enum Scanner {
                 title: Line(ru: "Telegram медиа", en: "Telegram media"),
                 subtitle: Line.proper(acc),
                 url: account.appendingPathComponent("postbox/media"),
-                selected: true
+                selected: true,
+                keepsLogins: true
             ) {
                 rows.append(x)
             }
@@ -805,15 +1316,47 @@ enum Scanner {
         if let x = item("msg", .messengers, Line(ru: "Вложения Сообщений", en: "Messages attachments"), Line(ru: "Без полного доступа почти ничего не видно", en: "Needs Full Disk Access or you'll see almost nothing"), "Library/Messages/Attachments", selected: false) {
             rows.append(x)
         }
-        if let x = item("tgdesk", .messengers, Line.proper("Telegram Desktop cache"), Line.proper("tdata/user_data"), "Library/Application Support/Telegram Desktop/tdata/user_data") {
-            rows.append(x)
+        // `tdata/user_data` is not a cache boundary. Wiping it whole has logged users out
+        // on some Telegram Desktop versions. Official Telegram paths put disposable bytes
+        // only in these children; key_data(s), settings and the account map stay untouched.
+        for userData in telegramDesktopUserDataRoots() {
+            for leaf in ["cache", "media_cache"] {
+                if let x = messengerFolder(
+                    id: "tgdesk-\(leaf)-\(userData.lastPathComponent)",
+                    title: Line(
+                        ru: leaf == "cache" ? "Telegram Desktop кэш" : "Telegram Desktop медиа-кэш",
+                        en: leaf == "cache" ? "Telegram Desktop cache" : "Telegram Desktop media cache"
+                    ),
+                    subtitle: Line(
+                        ru: "Только tdata/\(userData.lastPathComponent)/\(leaf) · ключи входа не затрагиваются",
+                        en: "Only tdata/\(userData.lastPathComponent)/\(leaf) · login keys stay untouched"
+                    ),
+                    url: userData.appendingPathComponent(leaf),
+                    selected: true,
+                    keepsLogins: true
+                ) {
+                    rows.append(x)
+                }
+            }
         }
         return rows
     }
 
-    private static func messengerFolder(id: String, title: Line, subtitle: Line, url: URL, selected: Bool) -> JunkItem? {
-        if Keep.isProtected(url) { return nil }
-        let b = DiskSizer.bytes(at: url)
+    private static func messengerFolder(
+        id: String,
+        title: Line,
+        subtitle: Line,
+        url: URL,
+        selected: Bool,
+        keepsLogins: Bool = false
+    ) -> JunkItem? {
+        let explicitTelegramCache = id.hasPrefix("tgdesk-cache-") || id.hasPrefix("tgdesk-media_cache-")
+            ? Keep.isTelegramDesktopCache(url) : false
+        if Keep.isExtraProtected(url) { return nil }
+        if Keep.isProtected(url), !explicitTelegramCache { return nil }
+        let b = explicitTelegramCache
+            ? (DiskSizer.duSK(url, timeout: 4) ?? 0)
+            : DiskSizer.bytes(at: url)
         guard b > 16_384 else { return nil }
         return JunkItem(
             id: id,
@@ -824,8 +1367,30 @@ enum Scanner {
             bytes: b,
             selected: selected,
             kind: .wipeChildren,
-            keepsLogins: false
+            keepsLogins: keepsLogins
         )
+    }
+
+    private static func telegramDesktopUserDataRoots() -> [URL] {
+        let fm = FileManager.default
+        let tdata = home().appendingPathComponent("Library/Application Support/Telegram Desktop/tdata")
+        guard let children = try? fm.contentsOfDirectory(
+            at: tdata,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: []
+        ) else { return [] }
+        return children.filter { url in
+            let name = url.lastPathComponent
+            let validName = name == "user_data"
+                || (name.hasPrefix("user_data#")
+                    && !name.dropFirst("user_data#".count).isEmpty
+                    && name.dropFirst("user_data#".count).allSatisfy(\.isNumber))
+            guard validName,
+                  let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else {
+                return false
+            }
+            return values.isDirectory == true && values.isSymbolicLink != true
+        }.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
     /// Any Telegram on this Mac: keepcoder, Desktop, whatever lives under Group Containers.
@@ -874,7 +1439,13 @@ enum Scanner {
         var seen = Set<String>()
         var out: [JunkItem] = []
         for item in items {
-            let key = item.url.standardizedFileURL.path
+            let path = item.url.standardizedFileURL.path
+            let key: String
+            if item.kind == .advice || item.kind == .deleteCaptureRemnants {
+                key = "\(item.id)|\(path)"
+            } else {
+                key = path
+            }
             if seen.contains(key) { continue }
             seen.insert(key)
             out.append(item)
@@ -907,5 +1478,19 @@ enum Scanner {
             }
         }
         return total
+    }
+}
+
+extension Module {
+    /// Some of this layer's stages are deep (Smart skips them) — opening the layer runs them.
+    var hasDeepStages: Bool {
+        Scanner.ScanStage.allCases.contains { $0.module == self && $0.isDeep }
+    }
+
+    /// Smart runs none of this layer's stages (Large files, Duplicates): it only ever has results
+    /// from its own scan, so those results survive a new Smart scan.
+    var isDeepOnly: Bool {
+        let own = Scanner.ScanStage.allCases.filter { $0.module == self }
+        return !own.isEmpty && own.allSatisfy(\.isDeep)
     }
 }

@@ -15,8 +15,44 @@ enum DiskSizer {
         return total
     }
 
-    /// Trash bins often hold packages (.app, .dmg mounts). Prefer `du`, then a walk that does not
-    /// skip package descendants or hidden names inside the bin.
+    /// Enumeration-safe measurement. A sandbox container that cannot be read must not
+    /// consume the normal 12-second `du` budget and stall the whole Smart Scan.
+    static func boundedBytes(at url: URL, timeout: TimeInterval) -> Int64? {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return 0 }
+        if Keep.isProtected(url) { return 0 }
+        if !isDir.boolValue { return fileSize(url) }
+        return duSK(url, timeout: timeout)
+    }
+
+    /// One `du` process for a whole enumeration stage. This caps the stage once instead
+    /// of paying a timeout for every sandbox container that macOS refuses to traverse.
+    static func batchBytes(at urls: [URL], timeout: TimeInterval) -> [String: Int64] {
+        var seen = Set<String>()
+        let paths = urls.compactMap { url -> String? in
+            let path = url.standardizedFileURL.path
+            guard !seen.contains(path), !Keep.isProtected(url),
+                  FileManager.default.fileExists(atPath: path) else { return nil }
+            seen.insert(path)
+            return path
+        }
+        guard !paths.isEmpty else { return [:] }
+        ScanThrottle.beginWorker()
+        let ran = CamProcess.run(path: "/usr/bin/du", arguments: ["-sk"] + paths, timeout: timeout)
+        ScanThrottle.reliefIfNeeded()
+        var result: [String: Int64] = [:]
+        for line in ran.out.split(whereSeparator: \.isNewline) {
+            let fields = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: true)
+            guard fields.count == 2, let kb = Int64(fields[0].trimmingCharacters(in: .whitespaces)) else {
+                continue
+            }
+            result[String(fields[1])] = kb * 1024
+        }
+        return result
+    }
+
+    /// Trash bins often hold packages (.app, .dmg mounts). Prefer `du`, then a walk that
+    /// does not skip package descendants or hidden names inside the bin.
     static func trashBytes(at url: URL) -> Int64 {
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
@@ -40,26 +76,28 @@ enum DiskSizer {
     // MARK: - Native sizer
 
     /// Fan the top-level subdirectories out across cores, sum their walked sizes plus the direct
-    /// files. One level of parallelism keeps memory flat while using the machine.
+    /// files. One level of parallelism keeps memory flat while using the machine. Direct children are
+    /// `lstat`-ed (no URL objects / resource values), and protection uses one exclusions snapshot —
+    /// this runs for every card we size, many of which are flat folders full of small files.
     private static func parallelSize(_ dir: URL) -> Int64 {
-        let fm = FileManager.default
-        guard let kids = try? fm.contentsOfDirectory(
-            at: dir,
-            includingPropertiesForKeys: [.isDirectoryKey, .totalFileAllocatedSizeKey],
-            options: []
-        ) else { return 0 }
+        let root = dir.standardizedFileURL.path
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: root) else { return 0 }
+        let extras = Keep.extraPaths
 
         var subdirs: [URL] = []
         var fileTotal: Int64 = 0
-        for kid in kids {
-            if Keep.names.contains(kid.lastPathComponent) { continue }
-            if Keep.isProtected(kid) { continue }
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: kid.path, isDirectory: &isDir) else { continue }
-            if isDir.boolValue {
-                subdirs.append(kid)
+        var st = stat()
+        for name in names {
+            if Keep.names.contains(name) { continue }
+            let path = root.hasSuffix("/") ? root + name : root + "/" + name
+            guard lstat(path, &st) == 0 else { continue }
+            let type = st.st_mode & S_IFMT
+            guard type == S_IFDIR || type == S_IFREG else { continue }  // symlinks & specials: never followed
+            if Keep.isProtected(path: path, extras: extras) { continue }
+            if type == S_IFDIR {
+                subdirs.append(URL(fileURLWithPath: path, isDirectory: true))
             } else {
-                fileTotal += fileSize(kid)
+                fileTotal += Int64(st.st_blocks) * 512
             }
         }
         guard !subdirs.isEmpty else { return fileTotal }
@@ -72,28 +110,73 @@ enum DiskSizer {
         return acc.value
     }
 
-    /// Recursive sizer for one subtree. Includes hidden files; skips package descendants and any
-    /// `Keep`-protected / credential-named node. No hard file-count cap — cooperative yields only.
+    /// Recursive sizer for one subtree, on `fts(3)` — the traversal `du` uses. Stat data arrives with
+    /// each entry, so there is no per-file URL object or resource-value lookup; the old Foundation
+    /// enumerator also ran the full `Keep.isProtected` (path standardization + UserDefaults read) on
+    /// every *file*, and was ~3× slower than `du` on node_modules-sized trees.
+    ///
+    /// Counts hidden files and package contents (what a wipe actually frees), never follows symlinks
+    /// or crosses volumes, counts a hard-linked file once, and prunes `Keep`-protected / credential-
+    /// named subtrees at the directory — protection is checked per directory, not per file.
     static func walk(_ url: URL) -> Int64 {
-        guard let enumerator = FileManager.default.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey],
-            options: [.skipsPackageDescendants]
-        ) else { return 0 }
+        let root = url.standardizedFileURL.path
+        let extras = Keep.extraPaths            // one UserDefaults read per walk, not per file
+        let extraFiles = Set(extras)
+        if Keep.isProtected(path: root, extras: extras) { return 0 }
+
+        guard let cRoot = strdup(root) else { return 0 }
+        defer { free(cRoot) }
+        var argv: [UnsafeMutablePointer<CChar>?] = [cRoot, nil]
+        // FTS_NOCHDIR is required: we walk from several threads and chdir is process-wide.
+        guard let fts = fts_open(&argv, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, nil) else { return 0 }
+        defer { fts_close(fts) }
+
         var total: Int64 = 0
+        var linked = Set<InodeKey>()
         var n = 0
-        for case let fileURL as URL in enumerator {
+        while let ent = fts_read(fts) {
             ScanThrottle.tickSync(every: 2_000, counter: &n)
-            let name = fileURL.lastPathComponent
-            if Keep.names.contains(name) || Keep.isProtected(fileURL) {
-                enumerator.skipDescendants()
-                continue
+            switch Int32(ent.pointee.fts_info) {
+            case FTS_D:
+                if ent.pointee.fts_level > 0, isKeptName(ent) {
+                    _ = fts_set(fts, ent, FTS_SKIP)
+                    continue
+                }
+                let dir = String(cString: ent.pointee.fts_path)
+                // Protected if the directory itself matches, or if every path inside it would
+                // (a fragment like "/Parallels/" only matches once a child is appended).
+                if Keep.isProtected(path: dir, extras: extras) || Keep.isProtected(path: dir + "/", extras: extras) {
+                    _ = fts_set(fts, ent, FTS_SKIP)
+                }
+            case FTS_F:
+                if isKeptName(ent) { continue }
+                if !extraFiles.isEmpty, extraFiles.contains(String(cString: ent.pointee.fts_path)) { continue }
+                guard let st = ent.pointee.fts_statp?.pointee else { continue }
+                if st.st_nlink > 1, !linked.insert(InodeKey(dev: st.st_dev, ino: st.st_ino)).inserted {
+                    continue
+                }
+                total += Int64(st.st_blocks) * 512
+            default:
+                continue // post-order dirs, symlinks, unreadable / unstat-able entries
             }
-            guard let rv = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey]),
-                  rv.isRegularFile == true else { continue }
-            total += Int64(rv.totalFileAllocatedSize ?? 0)
         }
         return total
+    }
+
+    private struct InodeKey: Hashable {
+        let dev: Int32
+        let ino: UInt64
+    }
+
+    /// Lengths of `Keep.names` — lets the walker reject almost every entry without building a String.
+    private static let keptNameLengths = Set(Keep.names.map(\.utf8.count))
+
+    /// Is this entry's own name a credential / login-data name we never count or touch?
+    private static func isKeptName(_ ent: UnsafeMutablePointer<FTSENT>) -> Bool {
+        let len = Int(ent.pointee.fts_namelen)
+        guard keptNameLengths.contains(len) else { return false }
+        let name = String(cString: ent.pointee.fts_path + (Int(ent.pointee.fts_pathlen) - len))
+        return Keep.names.contains(name)
     }
 
     private static func fileSize(_ url: URL) -> Int64 {

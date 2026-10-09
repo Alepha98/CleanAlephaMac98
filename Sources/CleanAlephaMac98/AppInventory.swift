@@ -37,6 +37,18 @@ struct AppInventory: Sendable {
         if lower == "apple" || lower.hasPrefix("com.apple") || folder == "CleanAlephaMac98" {
             return true
         }
+        // Support folders of tools that live without a matching .app (e.g. the Codex CLI) — never
+        // leftovers. Carried over from the hand-tuned local 1.0.7 ownership rules.
+        if lower == "codex" || lower == "chatgpt" || lower == "com.openai.chat" {
+            return true
+        }
+        // Vendor folders owned by an installed app with a different name.
+        if lower.contains("openai"), names.contains(where: { $0.contains("chatgpt") || $0.contains("codex") }) {
+            return true
+        }
+        if lower.contains("anthropic"), names.contains(where: { $0.contains("claude") }) {
+            return true
+        }
 
         if lower.contains(".") {
             // Bundle-id shaped: exact, or a parent/child id (com.google.Chrome.helper ↔ com.google.Chrome).

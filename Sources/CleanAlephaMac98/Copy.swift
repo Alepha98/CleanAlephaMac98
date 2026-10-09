@@ -61,7 +61,7 @@ enum Copy {
     static let openLayer = Line(ru: "Открыть", en: "Open")
     static let smartOverview = Line(ru: "По разделам", en: "By section")
     static let stop = Line(ru: "Остановить", en: "Stop")
-    static let safe = Line(ru: "Безопасное", en: "Safe")
+    static let safe = Line(ru: "Отметить безопасное", en: "Select safe items")
     static let deselect = Line(ru: "Снять выбор", en: "Clear selection")
     static let later = Line(ru: "Позже", en: "Later")
     static let close = Line(ru: "Закрыть", en: "Close")
@@ -79,8 +79,8 @@ enum Copy {
     static let loginsBadge = Line(ru: "логины целы", en: "logins stay")
     static let needFDA = Line(ru: "Нужен полный доступ к диску", en: "Needs Full Disk Access")
     static let needFDAQuiet = Line(
-        ru: "Без полного доступа не видно Telegram и Safari",
-        en: "Without Full Disk Access, Telegram and Safari stay hidden"
+        ru: "Без полного доступа не видно скрытые ScreenRecordings, Telegram и Safari",
+        en: "Without Full Disk Access, hidden ScreenRecordings, Telegram, and Safari stay hidden"
     )
     static let dontTouch = Line(ru: "Не трогаем", en: "We don't touch")
     static let emptied = Line(ru: "снято", en: "cleared")
@@ -88,6 +88,14 @@ enum Copy {
     static let historyBadge = Line(ru: "история", en: "history")
     static let leftoverBadge = Line(ru: "остаток", en: "leftover")
     static let rebuildBadge = Line(ru: "скачается снова", en: "will re-download")
+    static let deepBadge = Line(ru: "глубокая очистка", en: "deep clean")
+    static let auditBadge = Line(ru: "только анализ", en: "read-only")
+    static let hiddenCopyBadge = Line(ru: "скрытая копия", en: "hidden copy")
+    static let details = Line(ru: "Подробнее", en: "Details")
+    static let hideDetails = Line(ru: "Скрыть пояснение", en: "Hide details")
+    static let whatIsThis = Line(ru: "Что это", en: "What this is")
+    static let whatChanges = Line(ru: "Что изменится", en: "What changes")
+    static let exactLocation = Line(ru: "Где лежит", en: "Location")
     static let counting = Line(ru: "считаем…", en: "counting…")
     static let foundLabel = Line(ru: "найдено", en: "found")
 
@@ -98,15 +106,15 @@ enum Copy {
     static let layerUnscanned = Line(ru: "Этот слой ещё не сканировали.", en: "Haven't scanned this yet.")
     static let foldersClean = Line(ru: "В открытых папках чисто.", en: "Those folders are clean.")
     static let foldersCleanFDA = Line(
-        ru: "В открытых папках чисто. Telegram и Safari без полного доступа не видны.",
-        en: "Those folders are clean. Telegram and Safari need Full Disk Access."
+        ru: "В открытых папках чисто. Скрытые ScreenRecordings, Telegram и Safari без полного доступа не видны.",
+        en: "Those folders are clean. Hidden ScreenRecordings, Telegram, and Safari need Full Disk Access."
     )
     static let layerClean = Line(ru: "В этом слое чисто", en: "This layer is clean")
     static let done = Line(ru: "Готово", en: "Done")
     static let emptySmart = Line(ru: "Кэша и мусора в открытых папках нет.", en: "No cache or junk in the open folders.")
     static let emptyFDA = Line(
-        ru: "Telegram и Safari без полного доступа не видны.",
-        en: "Telegram and Safari need Full Disk Access."
+        ru: "Скрытые ScreenRecordings, Telegram и Safari без полного доступа не видны.",
+        en: "Hidden ScreenRecordings, Telegram, and Safari need Full Disk Access."
     )
 
     static let diskTitle = Line(ru: "Обзор диска", en: "Disk")
@@ -175,6 +183,8 @@ enum Copy {
     static let careLookingApps = Line(ru: "Смотрю приложения…", en: "Checking applications…")
     static let careLookingClutter = Line(ru: "Смотрю хранилище…", en: "Analyzing storage…")
     static let careWaiting = Line(ru: "Ждёт своей очереди", en: "Waiting its turn")
+    static let careOnDemand = Line(ru: "Отдельный скан — начну, когда откроешь", en: "Separate scan — starts when you open it")
+    static let careTapToScan = Line(ru: "Нажми — просканирую", en: "Tap to scan")
     static let careFound = Line(ru: "Нашли", en: "Found")
     static let aboutApp = Line(ru: "О CleanAlephaMac98", en: "About CleanAlephaMac98")
     static let openGitHub = Line(ru: "Открыть GitHub", en: "Open on GitHub")
@@ -205,7 +215,10 @@ enum Copy {
     )
     static let noon = Line(ru: "12:00", en: "12:00")
     static let eightPm = Line(ru: "20:00", en: "20:00")
-    static let fdaHint = Line(ru: "кэш и логи, не корзина, история и крупные файлы", en: "caches and logs, not Trash, history, or large files")
+    static let fdaHint = Line(
+        ru: "отметить кэш, логи, незавершённые загрузки и старые файлы TemporaryItems",
+        en: "select caches, logs, incomplete downloads, and old TemporaryItems files"
+    )
     static let deselectHint = Line(ru: "снять галки с видимых карточек", en: "clear checks on visible cards")
     static let leftoverGone = Line(ru: "В /Applications не найдено", en: "Not in /Applications")
     static let fdaOpenFail = Line(ru: "Настройки доступа не открылись.", en: "Couldn't open access settings.")
@@ -279,6 +292,10 @@ enum Copy {
     static let appsTitle = Line(ru: "Кто держит память", en: "What's holding RAM")
     static let pulseIdle = Line(ru: "Нажми «Сканировать».", en: "Press Scan.")
     static let pulseReady = Line(ru: "Готово", en: "Ready")
+    static let pulseOverviewNote = Line(
+        ru: "Это обзор памяти и CPU — здесь ничего не удаляется.",
+        en: "This is a RAM and CPU overview — nothing is deleted here."
+    )
     static let ramHonest = Line(ru: "Готово", en: "Ready")
     static let appRamHint = Line(ru: "", en: "")
     static let tabRamHint = Line(
@@ -509,6 +526,32 @@ enum Copy {
     static let modulePrivacy = Line(ru: "Приватность", en: "Privacy")
     static let moduleSpace = Line(ru: "Обзор диска", en: "Disk")
     static let moduleTools = Line(ru: "Обслуживание", en: "Maintenance")
+    static let moduleUninstaller = Line(ru: "Деинсталлятор", en: "Uninstaller")
+    static let moduleDeepSearch = Line(ru: "Глубокий поиск", en: "Deep search")
+    static let subDeepSearch = Line(
+        ru: "Скрытые скриншоты и записи, остатки, AI-хранилища, тайники в скрытых папках. Долго — несколько минут.",
+        en: "Hidden screenshots and recordings, remnants, AI storage, piles in hidden folders. Takes a few minutes."
+    )
+
+    static let subUninstaller = Line(
+        ru: "Снести приложение вместе со всеми его хвостами на диске.",
+        en: "Remove an app together with everything it scattered on disk."
+    )
+    // Uninstaller screen
+    static let uninstallHint = Line(
+        ru: "Выбери приложение — покажу весь его след и уберу в Корзину.",
+        en: "Pick an app — I'll show its full footprint and move it to the Trash."
+    )
+    static let uninstallReading = Line(ru: "Читаю приложения…", en: "Reading apps…")
+    static let uninstallMeasuring = Line(ru: "Считаю след на диске…", en: "Measuring the footprint…")
+    static let uninstallAppItself = Line(ru: "Само приложение", en: "The app itself")
+    static let uninstallLeftovers = Line(ru: "Хвосты", en: "Leftovers")
+    static let uninstallNoLeftovers = Line(ru: "Хвостов не нашёл — уберём только приложение.", en: "No leftovers found — only the app itself.")
+    static let uninstallMove = Line(ru: "Убрать в Корзину", en: "Move to Trash")
+    static let uninstallBack = Line(ru: "← Все приложения", en: "← All apps")
+    static let uninstallRunning = Line(ru: "Запущено — можно удалить, но лучше сначала закрыть.", en: "Running — you can remove it, but quitting first is cleaner.")
+    static let uninstallEmpty = Line(ru: "Приложений в /Applications не нашёл.", en: "No apps found in /Applications.")
+    static let uninstallTrashHint = Line(ru: "Всё уходит в Корзину — вернёшь одним движением.", en: "Everything goes to the Trash — one move to undo.")
 
     static let subSmart = Line(
         ru: "Кэш, мусор, проверка и быстродействие.",
@@ -612,12 +655,60 @@ enum Copy {
         )
     }
 
+    /// Shown before Clean: part of the selection belongs to apps that are open right now.
+    static func blockedByOpenApps(_ bytes: Int64, apps: [String], cleansOnQuit: Bool = WatchAgent.isInstalled) -> Line {
+        let names = apps.joined(separator: ", ")
+        let one = apps.count == 1
+        if cleansOnQuit {
+            return Line(
+                ru: "≈\(ByteFormat.string(bytes, .ru)) из выбранного не очистить, пока открыты \(names) — очистится само, как только \(one ? "она закроется" : "они закроются"). Сессии не трогаем.",
+                en: "≈\(ByteFormat.string(bytes, .en)) of the selection waits for \(names) to quit — it will be cleaned automatically then. Sessions stay intact."
+            )
+        }
+        return Line(
+            ru: "≈\(ByteFormat.string(bytes, .ru)) из выбранного не очистить, пока открыты \(names) — закрой и нажми «Очистить» ещё раз. Сессии не трогаем.",
+            en: "≈\(ByteFormat.string(bytes, .en)) of the selection can't be cleaned while \(names) \(one ? "is" : "are") open — quit \(one ? "it" : "them") and press Clean again. Sessions stay intact."
+        )
+    }
+
+    static func closeAppsFirst(_ apps: [String], freed: Int64, failed: Int) -> Line {
+        let names = apps.joined(separator: ", ")
+        if freed > 0 {
+            return Line(
+                ru: "Снято \(ByteFormat.string(freed, .ru)). Закрой \(names) и повтори для оставшихся \(failed) шт. — так аккаунты останутся на месте.",
+                en: "Cleared \(ByteFormat.string(freed, .en)). Quit \(names) and retry the remaining \(failed) — this keeps accounts signed in."
+            )
+        }
+        return Line(
+            ru: "Закрой \(names) и повтори очистку — активные сессии не трогаем.",
+            en: "Quit \(names) and retry — active sessions are left untouched."
+        )
+    }
+
     static func partialRead(_ n: Int) -> Line {
         Line(ru: "Часть папок не прочиталась (\(n)).", en: "Some folders couldn't be read (\(n)).")
     }
 
     static func selected(_ n: Int, of total: Int) -> Line {
         Line(ru: "выбрано \(n) из \(total)", en: "\(n) of \(total) selected")
+    }
+
+    /// "3 хвоста · 412 МБ" — footprint summary line under an app in the uninstaller.
+    static func uninstallFootprint(_ n: Int, _ bytes: Int64) -> Line {
+        if n == 0 {
+            return Line(ru: ByteFormat.string(bytes, .ru), en: ByteFormat.string(bytes, .en))
+        }
+        return Line(
+            ru: "\(n) хв. · \(ByteFormat.string(bytes, .ru))",
+            en: "\(n) item\(n == 1 ? "" : "s") · \(ByteFormat.string(bytes, .en))"
+        )
+    }
+
+    static func uninstallDone(_ name: String, _ bytes: Int64) -> Line {
+        Line(
+            ru: "«\(name)» в Корзине · освобождено \(ByteFormat.string(bytes, .ru))",
+            en: "“\(name)” trashed · \(ByteFormat.string(bytes, .en)) freed"
+        )
     }
 
     static func percent(_ n: Int) -> Line {
@@ -638,6 +729,13 @@ enum Copy {
 
     static func orbCanClean(_ bytes: Int64) -> Line {
         Line(ru: "Сфера, можно очистить \(ByteFormat.string(bytes, .ru))", en: "Flask, can clean \(ByteFormat.string(bytes, .en))")
+    }
+
+    static func orbMemoryUsed(_ bytes: Int64) -> Line {
+        Line(
+            ru: "Сфера, используется \(ByteFormat.string(bytes, .ru)) памяти",
+            en: "Flask, \(ByteFormat.string(bytes, .en)) of memory in use"
+        )
     }
 
     static func diskA11y(used: Int64, reserved: Int64, free: Int64) -> Line {

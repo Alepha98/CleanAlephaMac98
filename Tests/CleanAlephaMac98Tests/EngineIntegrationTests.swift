@@ -2,7 +2,8 @@ import XCTest
 @testable import CleanAlephaMac98
 
 /// End-to-end exercise of the whole engine on one realistic mixed tree: the sizer must total
-/// correctly (hidden files included), and the duplicate finder must recover exactly the planted
+/// correctly (hidden files included), and the live duplicate engine (`Scanner.duplicatesForQA` —
+/// the APFS-aware one the Duplicates layer runs) must recover exactly the planted
 /// duplicate sets with zero false positives — while a near-miss pair (same size, one unsampled
 /// differing byte) stays unflagged. Prints wall-time as a lightweight benchmark.
 final class EngineIntegrationTests: XCTestCase {
@@ -40,15 +41,18 @@ final class EngineIntegrationTests: XCTestCase {
         XCTAssertGreaterThan(total, Int64(10 * mb), "planted ~13MB+ of real content")
 
         // --- dedup: exactly the planted sets (2 from B, 1 from A, 1 from C) = 4 items, no near-miss ---
-        let dupes = DuplicateFinder.find(in: [tree.root])
+        // Plain copies only — hard links and APFS clones surface as read-only advice, not deletions.
+        let dupes = Scanner.duplicatesForQA(roots: [tree.root], minimumLogicalBytes: 1_048_576)
+            .filter { $0.kind == .deleteItem }
         let elapsed = Date().timeIntervalSince(start)
         print("⏱ EngineIntegration: sized+deduped tree in \(String(format: "%.0f", elapsed * 1000)) ms, size=\(ByteFormat.string(total, .en))")
 
-        XCTAssertEqual(dupes.items.count, 4, "3 sets → (2-1)+(3-1)+(2-1) = 4 deletable items")
-        let flaggedNames = Set(dupes.items.map { $0.url.lastPathComponent })
+        XCTAssertEqual(dupes.count, 4, "3 sets → (2-1)+(3-1)+(2-1) = 4 deletable items")
+        let flaggedNames = Set(dupes.map { $0.url.lastPathComponent })
         XCTAssertFalse(flaggedNames.contains("m1.bin"), "near-miss must never be flagged")
         XCTAssertFalse(flaggedNames.contains("m2.bin"), "near-miss must never be flagged")
         // The Downloads copy of set C is the one offered for deletion (working original kept).
-        XCTAssertTrue(dupes.items.contains { $0.url.path.contains("/Downloads/") })
+        XCTAssertTrue(dupes.contains { $0.url.path.contains("/Downloads/") })
+        XCTAssertTrue(dupes.allSatisfy { $0.module == .duplicates && !$0.selected }, "never pre-selected")
     }
 }

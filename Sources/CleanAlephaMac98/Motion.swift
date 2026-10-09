@@ -40,6 +40,24 @@ enum Motion {
     }
 }
 
+/// Lets the click that activates an inactive window also press this control. SwiftUI swallows that
+/// first click by default, so after switching over from another app "Scan" needed a second press.
+/// Only for non-destructive controls (scan, stop, navigation) — never Clean, where a click meant to
+/// focus the window must not start deleting.
+struct ActsOnFirstClick: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.allowsWindowActivationEvents(true)
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func actsOnFirstClick() -> some View { modifier(ActsOnFirstClick()) }
+}
+
 struct PrimaryButton: ButtonStyle {
     var enabled: Bool = true
     func makeBody(configuration: Configuration) -> some View {
@@ -148,12 +166,16 @@ private struct QuietButtonBody: View {
                 label
                     .background(
                         RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                            .fill(
-                                enabled
-                                    ? (careChrome
-                                        ? C.careInk.opacity(configuration.isPressed ? 0.14 : 0.10)
-                                        : (configuration.isPressed ? C.paperHover : C.paper))
-                                    : (careChrome ? C.careInk.opacity(0.06) : C.paper.opacity(0.55))
+                            .fill(.thinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                                    .fill(
+                                        enabled
+                                            ? (careChrome
+                                                ? C.careInk.opacity(configuration.isPressed ? 0.14 : 0.08)
+                                                : C.action.opacity(configuration.isPressed ? 0.14 : 0.07))
+                                            : C.action.opacity(0.03)
+                                    )
                             )
                     )
                     .overlay(
@@ -186,18 +208,39 @@ struct GhostButton: ButtonStyle {
 private struct GhostButtonBody: View {
     let configuration: ButtonStyleConfiguration
     @Environment(\.careChrome) private var careChrome
+    @Environment(\.isEnabled) private var enabled
+    @State private var hover = false
 
     var body: some View {
-        configuration.label
+        let label = configuration.label
             .font(F.callout())
             .foregroundStyle(
                 (careChrome ? C.careSecondary : C.secondary)
-                    .opacity(configuration.isPressed ? 0.7 : 1)
+                    .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.42)
             )
             .frame(minHeight: S.hitMin)
-            .padding(.horizontal, S.xs)
+            .padding(.horizontal, S.sm)
+
+        Group {
+            if #available(macOS 26.0, *) {
+                label.camGlass(
+                    tint: C.action.opacity(hover ? 0.12 : 0.04),
+                    interactive: enabled,
+                    shape: .capsule
+                )
+            } else {
+                label.background(
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .overlay(Capsule().fill(C.action.opacity(hover ? 0.11 : 0.035)))
+                        .overlay(Capsule().stroke(Color.white.opacity(hover ? 0.55 : 0.25), lineWidth: 1))
+                )
+            }
+        }
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(Motion.easePress, value: configuration.isPressed)
+            .animation(Motion.easeHover, value: hover)
+            .onHover { hover = enabled && $0 }
     }
 }
 
@@ -249,20 +292,32 @@ private struct DestructiveQuietBody: View {
 
 struct BackChromeButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        let label = configuration.label
             .font(F.button())
             .foregroundStyle(C.accentText)
             .frame(minHeight: 40)
             .padding(.horizontal, S.md)
-            .background(
-                RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                    .fill(C.paper)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
-                    .stroke(C.action.opacity(configuration.isPressed ? 0.55 : 0.40), lineWidth: 1.5)
-            )
-            .shadow(color: C.pillShadow, radius: 6, y: 2)
+
+        Group {
+            if #available(macOS 26.0, *) {
+                label.camGlass(tint: C.action.opacity(0.14), interactive: true, shape: .rounded)
+            } else {
+                label
+                    .background(
+                        RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                            .fill(.thinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                                    .fill(C.action.opacity(configuration.isPressed ? 0.16 : 0.08))
+                            )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: S.buttonRadius, style: .continuous)
+                            .stroke(C.action.opacity(configuration.isPressed ? 0.55 : 0.34), lineWidth: 1.2)
+                    )
+                    .shadow(color: C.pillShadow, radius: 6, y: 2)
+            }
+        }
             .focusStroke(radius: S.buttonRadius)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(Motion.easePress, value: configuration.isPressed)
@@ -277,20 +332,36 @@ struct WindowBackgroundDrag: NSViewRepresentable {
         DragNSView()
     }
 
+    /// Runs on every SwiftUI update of the shell, so it only touches the window when something differs:
+    /// re-assigning the appearance (a fresh NSAppearance object each time) and the autosave name on
+    /// every update made AppKit re-resolve the whole view tree while the user was clicking.
     func updateNSView(_ nsView: NSView, context: Context) {
-        nsView.window?.isMovableByWindowBackground = true
-        nsView.window?.titlebarAppearsTransparent = true
-        nsView.window?.setFrameAutosaveName("CAM98.Main")
-        nsView.window?.appearance = appearance.nsAppearance
+        guard let window = nsView.window else { return }
+        DragNSView.configure(window)
+        let wanted = appearance.nsAppearance
+        if window.appearance?.name != wanted?.name {
+            window.appearance = wanted
+        }
     }
 }
 
 private final class DragNSView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        window?.isMovableByWindowBackground = true
-        window?.titlebarAppearsTransparent = true
-        window?.setFrameAutosaveName("CAM98.Main")
+        if let window { DragNSView.configure(window) }
+    }
+
+    /// Movable background, transparent title bar, frame autosave — plus no tab bar and no full-screen
+    /// for this single-window utility (the top strip is just the traffic lights, and the "View" menu,
+    /// which would otherwise carry "Enter Full Screen", stays empty). Idempotent and cheap.
+    static func configure(_ window: NSWindow) {
+        if !window.isMovableByWindowBackground { window.isMovableByWindowBackground = true }
+        if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
+        if window.frameAutosaveName != "CAM98.Main" { window.setFrameAutosaveName("CAM98.Main") }
+        if window.tabbingMode != .disallowed { window.tabbingMode = .disallowed }
+        if !window.collectionBehavior.isDisjoint(with: [.fullScreenPrimary, .fullScreenAuxiliary]) {
+            window.collectionBehavior.subtract([.fullScreenPrimary, .fullScreenAuxiliary])
+        }
     }
 }
 

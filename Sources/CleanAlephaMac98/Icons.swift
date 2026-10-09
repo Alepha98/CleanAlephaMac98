@@ -17,6 +17,7 @@ enum Glyph: Equatable, Sendable {
         case .leftovers: self = .leftovers
         case .large: self = .large
         case .duplicates: self = .duplicates
+        case .deepSearch: self = .photo
         case .browsers: self = .browsers
         case .dev: self = .dev
         case .messengers: self = .messengers
@@ -26,6 +27,7 @@ enum Glyph: Equatable, Sendable {
         case .startup: self = .startup
         case .space: self = .space
         case .tools: self = .tools
+        case .uninstaller: self = .leftovers
         }
     }
 

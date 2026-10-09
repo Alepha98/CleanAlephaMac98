@@ -15,6 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var state: AppState?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // No window tabs: kills the tab bar (the title "pill" + the "+" new-tab button) app-wide.
+        NSWindow.allowsAutomaticWindowTabbing = false
+
         // `open -n` during installs spawned 3 copies, each burning ~30% CPU on the orb.
         let id = Bundle.main.bundleIdentifier ?? "com.alepha98.CleanAlephaMac98"
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: id)
@@ -31,6 +34,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    /// SwiftUI keeps a View menu even with its sidebar/toolbar groups replaced by nothing, and AppKit
+    /// parks "Enter Full Screen" in it (the window opts out of full screen). SwiftUI can rebuild the
+    /// menu bar on any command change, so hollow menus are dropped before each update.
+    func applicationWillUpdate(_ notification: Notification) {
+        guard let bar = NSApp.mainMenu else { return }
+        for item in bar.items.reversed() {
+            guard let menu = item.submenu, !item.title.isEmpty else { continue }
+            let hollow = menu.items.allSatisfy {
+                $0.isSeparatorItem || $0.action == #selector(NSWindow.toggleFullScreen(_:))
+            }
+            if hollow { bar.removeItem(item) }
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -61,6 +78,75 @@ struct CleanAlephaMac98App: App {
         }
         if CommandLine.arguments.contains("--qa-keep") {
             QAHarness.keep()
+        }
+        if CommandLine.arguments.contains("--qa-artifacts") {
+            QAHarness.artifacts()
+        }
+        if CommandLine.arguments.contains("--qa-artifact-scan") {
+            QAHarness.artifactScan()
+        }
+        if CommandLine.arguments.contains("--qa-junk") {
+            QAHarness.junk()
+        }
+        if CommandLine.arguments.contains("--qa-system-deep") {
+            QAHarness.systemDeep()
+        }
+        if CommandLine.arguments.contains("--qa-hidden-captures") {
+            QAHarness.hiddenCaptures()
+        }
+        if CommandLine.arguments.contains("--qa-forensic-remnants") {
+            QAHarness.forensicRemnants()
+        }
+        if CommandLine.arguments.contains("--qa-screenshot-provenance") {
+            QAHarness.screenshotProvenance()
+        }
+        if CommandLine.arguments.contains("--qa-similar-captures") {
+            QAHarness.similarCaptures()
+        }
+        if CommandLine.arguments.contains("--qa-duplicate-folders") {
+            QAHarness.duplicateFolders()
+        }
+        if CommandLine.arguments.contains("--qa-duplicate-folders-real") {
+            QAHarness.duplicateFoldersReal()
+        }
+        if CommandLine.arguments.contains("--qa-trash-forensics") {
+            QAHarness.trashForensics()
+        }
+        if CommandLine.arguments.contains("--qa-deep-media-forensics") {
+            QAHarness.deepMediaForensics()
+        }
+        if CommandLine.arguments.contains("--qa-ai-storage") {
+            QAHarness.aiStorage()
+        }
+        if CommandLine.arguments.contains("--qa-storage-intelligence") {
+            QAHarness.storageIntelligence()
+        }
+        if CommandLine.arguments.contains("--qa-storage-accounting") {
+            QAHarness.storageAccounting()
+        }
+        if CommandLine.arguments.contains("--qa-storage-intelligence-scan") {
+            QAHarness.storageIntelligenceScan()
+        }
+        if CommandLine.arguments.contains("--qa-hidden-trees") {
+            QAHarness.hiddenTrees()
+        }
+        if CommandLine.arguments.contains("--qa-cancellation") {
+            QAHarness.cancellation()
+        }
+        if CommandLine.arguments.contains("--watch") {
+            QuitWatcher.run()
+        }
+        if CommandLine.arguments.contains("--watch-install") {
+            exit(WatchAgent.apply(enabled: true) ? 0 : 1)
+        }
+        if CommandLine.arguments.contains("--qa-chrome-purge") {
+            QAHarness.chromePurge()
+        }
+        if CommandLine.arguments.contains("--qa-chrome") {
+            QAHarness.chromeReport()
+        }
+        if let arg = CommandLine.arguments.first(where: { $0.hasPrefix("--qa-du=") }) {
+            QAHarness.diskUsage(String(arg.dropFirst("--qa-du=".count)))
         }
         if CommandLine.arguments.contains("--qa-smart") {
             QAHarness.smart()
@@ -104,14 +190,8 @@ struct CleanAlephaMac98App: App {
             CommandGroup(replacing: .appInfo) {
                 Button(Copy.aboutApp.t(lang)) { showAbout(lang) }
             }
+            // One "File" menu holds every primary action — no duplicate custom menus.
             CommandGroup(replacing: .newItem) {
-                Button(Copy.scan.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Scan, object: nil)
-                }
-                .keyboardShortcut("n", modifiers: .command)
-                .disabled(!state.canScan)
-            }
-            CommandMenu(Copy.menuFile.t(lang)) {
                 Button(Copy.scan.t(lang)) {
                     NotificationCenter.default.post(name: .cam98Scan, object: nil)
                 }
@@ -122,109 +202,23 @@ struct CleanAlephaMac98App: App {
                 }
                 .disabled(state.isBusy)
                 Divider()
-                Button(Copy.close.t(lang)) {
-                    NSApp.keyWindow?.close()
-                }
-                .keyboardShortcut("w", modifiers: .command)
-            }
-            CommandMenu(Copy.menuEdit.t(lang)) {
-                Button(Copy.safe.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Safe, object: nil)
-                }
-                .keyboardShortcut("a", modifiers: [.command, .shift])
-                .disabled(!state.canSelectSafe)
-                Button(Copy.deselect.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Clear, object: nil)
-                }
-                .keyboardShortcut("d", modifiers: [.command, .shift])
-                .disabled(!state.canDeselect)
-            }
-            CommandMenu(Copy.cleanMenu.t(lang)) {
-                Button(Copy.scan.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Scan, object: nil)
-                }
-                .keyboardShortcut("r", modifiers: [.command, .shift])
-                .disabled(!state.canScan)
                 Button(Copy.clean.t(lang)) {
                     NotificationCenter.default.post(name: .cam98Clean, object: nil)
                 }
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(!state.canClean)
-                Divider()
                 Button(Copy.stop.t(lang)) {
                     NotificationCenter.default.post(name: .cam98Cancel, object: nil)
                 }
                 .keyboardShortcut(".", modifiers: .command)
                 .disabled(!state.canCancel)
             }
-            CommandMenu(Copy.menuSections.t(lang)) {
-                Button(Copy.moduleSmart.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.smart.rawValue)
-                }
-                .keyboardShortcut("1", modifiers: .command)
-                Button(Copy.moduleJunk.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.junk.rawValue)
-                }
-                .keyboardShortcut("2", modifiers: .command)
-                Button(Copy.moduleMail.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.mail.rawValue)
-                }
-                .keyboardShortcut("3", modifiers: .command)
-                Button(Copy.moduleTrash.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.trash.rawValue)
-                }
-                .keyboardShortcut("4", modifiers: .command)
-                Button(Copy.moduleLeftovers.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.leftovers.rawValue)
-                }
-                .keyboardShortcut("5", modifiers: .command)
-                Button(Copy.moduleLarge.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.large.rawValue)
-                }
-                .keyboardShortcut("6", modifiers: .command)
-                Button(Copy.moduleDuplicates.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.duplicates.rawValue)
-                }
-                .keyboardShortcut("d", modifiers: .command)
-                Button(Copy.moduleBrowsers.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.browsers.rawValue)
-                }
-                .keyboardShortcut("7", modifiers: .command)
-                Button(Copy.moduleDev.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.dev.rawValue)
-                }
-                .keyboardShortcut("8", modifiers: .command)
-                Button(Copy.moduleMessengers.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.messengers.rawValue)
-                }
-                .keyboardShortcut("9", modifiers: .command)
-                Button(Copy.modulePrivacy.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.privacy.rawValue)
-                }
-                .keyboardShortcut("p", modifiers: .command)
-                Divider()
-                Button(Copy.modulePulse.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.pulse.rawValue)
-                }
-                .keyboardShortcut("b", modifiers: .command)
-                Button(Copy.moduleProtect.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.protect.rawValue)
-                }
-                .keyboardShortcut("k", modifiers: .command)
-                Button(Copy.moduleStartup.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.startup.rawValue)
-                }
-                .keyboardShortcut("l", modifiers: .command)
-                Divider()
-                Button(Copy.moduleSpace.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.space.rawValue)
-                }
-                .keyboardShortcut("0", modifiers: .command)
-                Button(Copy.moduleTools.t(lang)) {
-                    NotificationCenter.default.post(name: .cam98Go, object: Module.tools.rawValue)
-                }
-                .keyboardShortcut("-", modifiers: .command)
-            }
+            // This utility has no text fields, no toolbar, no tabs → drop the Edit and View menus
+            // entirely (module navigation keeps its ⌘-shortcuts on the sidebar rows).
+            CommandGroup(replacing: .undoRedo) {}
+            CommandGroup(replacing: .pasteboard) {}
+            CommandGroup(replacing: .toolbar) {}
+            CommandGroup(replacing: .sidebar) {}
             CommandMenu(Copy.appearanceMenu.t(lang)) {
                 Picker(Copy.appearanceMenu.t(lang), selection: Binding(
                     get: { state.appearance },
